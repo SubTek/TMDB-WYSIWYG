@@ -318,7 +318,7 @@
               [style.fontSize.px]="element.styles.fontSize" [style.fontWeight]="element.styles.fontWeight"
               [style.textAlign]="element.styles.textAlign" [style.borderRadius.px]="element.styles.borderRadius"
               [style.borderWidth.px]="element.styles.borderWidth" [style.borderColor]="element.styles.borderColor"
-              [style.opacity]="element.styles.opacity"
+              [style.opacity]="isElementInGlobalSceneFade(element) ? 0 : element.styles.opacity"
               [style.boxShadow]="element.styles.boxShadow ? `${element.styles.boxShadow.x}px ${element.styles.boxShadow.y}px ${element.styles.boxShadow.blur}px ${element.styles.boxShadow.color}` : null"
               [style.textShadow]="element.styles.textShadow ? `${element.styles.textShadow.x}px ${element.styles.textShadow.y}px ${element.styles.textShadow.blur}px ${element.styles.textShadow.color}` : null"
               [style.backdropFilter]="(element.styles.filterBlur > 0 || element.styles.filterGrayscale > 0) ? 'blur(' + element.styles.filterBlur + 'px) grayscale(' + element.styles.filterGrayscale + ')' : null"
@@ -361,10 +361,8 @@
                     <div class="w-full h-full flex items-center overflow-x-hidden p-2 gap-3 pointer-events-none">
                       <div class="poster-scroll-container flex gap-3 h-full">
                         @if (element.tmdbData?.results) {
-                            @for(item of element.tmdbData.results.slice(0,10); track item.id) {
-                                @if(item.poster_path) {
-                                    <img [src]="'https://image.tmdb.org/t/p/w500' + item.poster_path" class="h-full w-auto inline-block rounded shadow-lg">
-                                }
+                            @for(item of getPosterScrollItems(element); track item.id) {
+                                <img [src]="'https://image.tmdb.org/t/p/w500' + item.poster_path" class="h-full w-auto inline-block rounded shadow-lg">
                             }
                         } @else {
                             <div class="flex gap-2 opacity-50"><div class="h-32 w-20 bg-[#183352] rounded"></div><div class="h-32 w-20 bg-[#183352] rounded"></div><div class="h-32 w-20 bg-[#183352] rounded"></div></div>
@@ -536,6 +534,38 @@
                             @for(endpoint of availableCollectionEndpoints(); track endpoint.key) { <option [value]="endpoint.key">{{ endpoint.name }}</option> }
                           </select>
                       </div>
+
+                      <div class="input-group">
+                          <label class="label flex justify-between items-center">
+                              Items Shown
+                              <span class="text-[10px] font-normal text-[#8eaec4]">{{ getEffectiveCollectionItemLimit(el) }}</span>
+                          </label>
+                          <select
+                              [ngModel]="getEffectiveCollectionItemLimit(el)"
+                              (ngModelChange)="updateCollectionItemLimit(el.id, +$event)"
+                              class="select text-xs"
+                              [disabled]="!isCollectionMaster(el)"
+                              title="How many TMDB results this collection should display">
+                              @for(limit of collectionItemLimitOptions; track limit) {
+                                  <option [value]="limit">{{ limit }} items</option>
+                              }
+                          </select>
+                          @if(!isCollectionMaster(el)) {
+                              <p class="text-[10px] text-[#64839e] mt-1">Using the synced source layer's item count.</p>
+                          }
+                      </div>
+
+                      @if(el.type === 'tmdb-backdrop-slideshow') {
+                        <div class="input-group">
+                            <label class="flex items-center justify-between gap-3 text-xs text-[#8eaec4] cursor-pointer">
+                                <span>
+                                    <span class="label mb-1 block">Global Scene Fade</span>
+                                    <span class="text-[10px] text-[#64839e] block">Fade linked TMDB layers together before swapping to the next item.</span>
+                                </span>
+                                <input type="checkbox" [ngModel]="getEffectiveGlobalSceneFade(el)" (ngModelChange)="updateGlobalSceneFade(el.id, $event)" [disabled]="!isCollectionMaster(el)" class="rounded bg-[#0a1724] border-[#254261] text-[#01b4e4] focus:ring-[#01b4e4]">
+                            </label>
+                        </div>
+                      }
 
                       @if(el.tmdbEndpoint?.startsWith('discover')) {
                         <div class="p-3 bg-[#0a1724] rounded border border-[#254261] mt-2">

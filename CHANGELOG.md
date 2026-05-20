@@ -1,5 +1,38 @@
 # Changelog
 
+## v3.0.0 - Scene-Synchronised Slideshows
+
+This major release makes TMDB collection slides behave as one synchronised scene. A backdrop slideshow can now act as the scene source for poster, overview, cast, rating, logo, and dynamic-field layers, with every linked layer using the same movie or TV item during each slide.
+
+### Highlights
+
+- Reworked editor slideshow sync so linked layers receive one shared slide item from the collection source instead of updating as separate, independent fetches.
+- Collection sources now preload enriched TMDB details for linked scene layers, including credits and images, so cast, logos, ratings, posters, and overview can update together.
+- Global Scene Fade now fades the whole linked scene out, swaps backdrop and linked content while hidden, then fades the full scene back in.
+- Protected poster scrolls and backdrop slideshows from being overwritten by single-item sync updates.
+- Syncing an element to an already-loaded collection source now refreshes that source with enriched scene data.
+- Generated PHP exports now use the same shared-scene model, enriched detail cache, collection item limit, and global fade timing.
+
+### Practical Outcome
+
+- A layout containing `Backdrop Slideshow`, `Poster`, `Overview`, `Cast`, and `Rating` can be linked to one collection source.
+- When the active slide is Avatar, all linked layers render Avatar data.
+- When the slide advances, the full scene fades out, swaps to the next TMDB item, and fades back in as one composed layout.
+
+## v1.2.1 - Collection Limits And Scene Fade Sync
+
+This patch improves slideshow and collection sync behavior so linked TMDB layers stay aligned with the active collection source.
+
+### Highlights
+
+- Added an `Items Shown` control for TMDB poster scrolls and backdrop slideshows.
+- Synced collection layers now inherit the source collection's item count, keeping the linked group on one master value.
+- Poster scrolls now render the configured number of TMDB results instead of being capped at 10 items.
+- Collection fetches can now request extra TMDB result pages when the item count is above 20.
+- Added a `Global Scene Fade` option for backdrop slideshows so the backdrop and synced TMDB layers fade together before swapping to the next item.
+- Linked poster scrolls now propagate their first visible item to synced poster/title/detail layers, matching backdrop slideshow behavior.
+- PHP exports now include collection item limits and global scene fade behavior.
+
 ## v1.2.0 - Canvas Presets, Backdrop Fit, And Layer Sync
 
 This release improves the editor workflow for designing across TV, mobile, and tablet canvases. It adds real resolution presets, visible aspect ratio metadata, one-click backdrop sizing, and a discoverable Properties control for syncing TMDB layers to slideshows or other source layers.

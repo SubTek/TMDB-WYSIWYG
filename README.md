@@ -255,11 +255,21 @@ The zoom control lives in the bottom-right of the canvas viewport. Use **Fit** t
 2. Select it → Properties
 3. Choose TMDB collection type (Popular, Top Rated, etc.)
 4. For Discover: Set genre filters, year, sort order
-5. Element auto-populates with TMDB results
+5. Set **Items Shown** to control how many TMDB results are displayed
+6. Element auto-populates with TMDB results
 
 **Link with other elements:**
 - Slideshows can control linked elements
 - When slideshow changes, linked elements update to show current item
+- Synced collection layers use the source collection's item count
+- Backdrop slideshows can use **Global Scene Fade** so the backdrop and synced layers fade together
+
+**Scene-synchronised layouts:**
+- Add a **Backdrop Slideshow** as the scene source
+- Add poster, overview, cast, rating, logo, or dynamic-field layers
+- Select each TMDB layer and choose the slideshow in **Properties → Sync with layer**
+- Enable **Global Scene Fade** on the slideshow for a single fade between full scene states
+- The editor and generated PHP export keep every linked layer on the same TMDB item for each slide
 
 ### 8. Export Your Layout
 

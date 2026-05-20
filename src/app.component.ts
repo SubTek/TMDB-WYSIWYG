@@ -3,8 +3,8 @@ import { CommonModule } from '@angular/common';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { inject as vcinject } from '@vercel/analytics';
-import { Observable, of, Subject } from 'rxjs';
-import { catchError, debounceTime, distinctUntilChanged, switchMap, takeUntil } from 'rxjs/operators';
+import { Observable, forkJoin, of, Subject } from 'rxjs';
+import { catchError, debounceTime, distinctUntilChanged, map, switchMap, takeUntil } from 'rxjs/operators';
 import { COUNTRIES, LANGUAGES } from './countries-languages';
 
 vcinject();
@@ -27,6 +27,8 @@ type ElementType =
 
 type ImageFit = 'cover' | 'contain' | 'fill';
 type BackdropFitMode = 'width' | 'height' | 'cover';
+type SlideshowState = {idx1: number, idx2: number, fade: boolean, sceneFade: boolean, backdrops: string[], items: any[]};
+type TmdbDetailEntry = { key: string; altKey: string; detail: any };
 
 interface CanvasResolutionPreset {
   id: string;
@@ -61,6 +63,8 @@ interface CanvasElement {
   tmdbData?: any;
   linkGroup?: string;
   imageFit: ImageFit;
+  collectionItemLimit?: number;
+  globalSceneFade?: boolean;
 
   // For Dynamic Data Fields
   dataPath?: string;
@@ -92,9 +96,13 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   private destroy$ = new Subject<void>();
   private readonly projectStorageKey = 'tmdbLayoutProject';
   private readonly maxHistoryStates = 50;
+  private readonly defaultCollectionItemLimit = 20;
+  private readonly maxCollectionItemLimit = 40;
+  private readonly sceneFadeDurationMs = 650;
   private restoredProjectFromStorage = false;
 
   readonly Math = Math;
+  readonly collectionItemLimitOptions = [5, 10, 15, 20, 30, 40];
 
   // --- CONSTANTS & STATIC DATA ---
   readonly countries = COUNTRIES;
@@ -187,7 +195,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   contextMenu = signal<ContextMenuState>({ visible: false, x: 0, y: 0, elementId: null });
   copiedStyles = signal<Partial<CanvasElement['styles']> | null>(null);
 
-  slideshowState = signal<{[id: string]: {idx1: number, idx2: number, fade: boolean, backdrops: string[], items: any[]}}>({});
+  slideshowState = signal<{[id: string]: SlideshowState}>({});
 
   draggedLayerId = signal<string | null>(null);
   dragOverLayerId = signal<string | null>(null);
@@ -226,6 +234,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
         tmdbCollectionType: el.tmdbCollectionType,
         tmdbEndpoint: el.tmdbEndpoint || '',
         discoverFilters: el.discoverFilters,
+        collectionItemLimit: this.isCollectionElement(el) ? this.getEffectiveCollectionItemLimit(el) : '',
         linkGroup: el.linkGroup || ''
       }))
   ));
@@ -262,6 +271,70 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   selectedSyncLayerId(element: CanvasElement): string {
     if (!element.linkGroup) return '';
     return this.syncLayerOptions().find(option => option.linkGroup === element.linkGroup)?.id || '';
+  }
+
+  private isCollectionElementType(type: ElementType | string): boolean {
+    return type === 'tmdb-backdrop-slideshow' || type === 'tmdb-poster-scroll';
+  }
+
+  isCollectionElement(element: CanvasElement): boolean {
+    return this.isCollectionElementType(element.type);
+  }
+
+  private normalizeCollectionItemLimit(value: any): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return this.defaultCollectionItemLimit;
+    return Math.max(1, Math.min(this.maxCollectionItemLimit, Math.round(parsed)));
+  }
+
+  private getCollectionMasterForElement(element: CanvasElement, elements = this.elements()): CanvasElement | null {
+    if (!element.linkGroup) return this.isCollectionElement(element) ? element : null;
+
+    const collectionPriority = (el: CanvasElement) => el.type === 'tmdb-backdrop-slideshow' ? 0 : 1;
+    const candidates = elements
+      .filter(el => el.linkGroup === element.linkGroup && this.isCollectionElement(el))
+      .sort((a, b) => collectionPriority(a) - collectionPriority(b) || a.zIndex - b.zIndex);
+
+    return candidates[0] || (this.isCollectionElement(element) ? element : null);
+  }
+
+  isCollectionMaster(element: CanvasElement): boolean {
+    return this.getCollectionMasterForElement(element)?.id === element.id;
+  }
+
+  getEffectiveCollectionItemLimit(element: CanvasElement, elements = this.elements()): number {
+    const master = this.getCollectionMasterForElement(element, elements);
+    return this.normalizeCollectionItemLimit(master?.collectionItemLimit ?? element.collectionItemLimit);
+  }
+
+  getEffectiveGlobalSceneFade(element: CanvasElement, elements = this.elements()): boolean {
+    const master = this.getCollectionMasterForElement(element, elements);
+    return !!(master?.globalSceneFade ?? element.globalSceneFade);
+  }
+
+  getPosterScrollItems(element: CanvasElement): any[] {
+    return this.getLimitedCollectionItems(element).filter((item: any) => item.poster_path);
+  }
+
+  private getCollectionDetailTargets(sourceEl: CanvasElement, elements = this.elements()): CanvasElement[] {
+    if (!sourceEl.linkGroup) return [];
+    return elements.filter(el =>
+      el.id !== sourceEl.id &&
+      el.linkGroup === sourceEl.linkGroup &&
+      el.type.startsWith('tmdb-') &&
+      !this.isCollectionElement(el)
+    );
+  }
+
+  private hasLinkedDetailTargets(sourceEl: CanvasElement, elements = this.elements()): boolean {
+    return this.getCollectionDetailTargets(sourceEl, elements).length > 0;
+  }
+
+  isElementInGlobalSceneFade(element: CanvasElement): boolean {
+    const master = this.getCollectionMasterForElement(element);
+    if (!master || master.type !== 'tmdb-backdrop-slideshow' || !this.getEffectiveGlobalSceneFade(master)) return false;
+    if (element.id !== master.id && element.linkGroup !== master.linkGroup) return false;
+    return !!this.slideshowState()[master.id]?.sceneFade;
   }
 
   isImageElement(elementId: string | null): boolean {
@@ -558,7 +631,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
 
   private normalizeElementForProject(element: CanvasElement): CanvasElement {
     const { tmdbData, ...rest } = element;
-    return {
+    const normalized: CanvasElement = {
       ...rest,
       discoverFilters: {
         sortBy: element.discoverFilters?.sortBy || 'popularity.desc',
@@ -566,6 +639,12 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
         year: element.discoverFilters?.year ? Number(element.discoverFilters.year) : null
       }
     };
+    if (this.isCollectionElementType(normalized.type)) {
+      normalized.collectionItemLimit = this.normalizeCollectionItemLimit(element.collectionItemLimit);
+      normalized.globalSceneFade = !!element.globalSceneFade;
+      normalized.tmdbId = undefined;
+    }
+    return normalized;
   }
 
   private restoreProject(project: any): boolean {
@@ -696,6 +775,8 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
       tmdbCollectionType: collectionType,
       discoverFilters: { sortBy: 'popularity.desc', genres: [], year: null },
       imageFit: isLogo ? 'contain' : 'cover',
+      collectionItemLimit: this.isCollectionElementType(type) ? this.defaultCollectionItemLimit : undefined,
+      globalSceneFade: false,
       linkGroup: '',
       dataPath: '',
       dataPrefix: '',
@@ -757,9 +838,30 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
          if(el && el.linkGroup) {
              this.propagateTmdbId(el.linkGroup, value, el.tmdbItemType);
          } else if(el) {
-             this.fetchTmdbDataForElement(el.id);
-         }
+	         this.fetchTmdbDataForElement(el.id);
+	     }
       }
+  }
+
+  updateCollectionItemLimit(elementId: string, value: number) {
+    const selected = this.elements().find(el => el.id === elementId);
+    if (!selected) return;
+
+    const master = this.getCollectionMasterForElement(selected) || selected;
+    const nextLimit = this.normalizeCollectionItemLimit(value);
+
+    this.elements.update(els => els.map(el => el.id === master.id ? { ...el, collectionItemLimit: nextLimit, tmdbData: null } : el));
+    this.fetchTmdbDataForElement(master.id);
+    this.saveStateToHistory();
+  }
+
+  updateGlobalSceneFade(elementId: string, value: boolean) {
+    const selected = this.elements().find(el => el.id === elementId);
+    if (!selected) return;
+
+    const master = this.getCollectionMasterForElement(selected) || selected;
+    this.elements.update(els => els.map(el => el.id === master.id ? { ...el, globalSceneFade: value } : el));
+    this.saveStateToHistory();
   }
 
   setImageFit(id: string, fit: ImageFit) {
@@ -841,16 +943,28 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     this.saveStateToHistory();
   }
 
+  private getLimitedCollectionItems(element: CanvasElement): any[] {
+    const results = element.tmdbData?.results;
+    if (!Array.isArray(results) || results.length === 0) return [];
+
+    return this.getLimitedCollectionItemsFromResults(element, results);
+  }
+
+  private getLimitedCollectionItemsFromResults(element: CanvasElement, results: any[]): any[] {
+    if (!Array.isArray(results) || results.length === 0) return [];
+    const limit = this.getEffectiveCollectionItemLimit(element);
+    if (element.type === 'tmdb-backdrop-slideshow') return results.filter((item: any) => item.backdrop_path).slice(0, limit);
+    if (element.type === 'tmdb-poster-scroll') return results.filter((item: any) => item.poster_path).slice(0, limit);
+    return results.slice(0, limit);
+  }
+
   private getCurrentTmdbSourceItem(elementId: string, element: CanvasElement): any | null {
     const slideshow = this.slideshowState()[elementId];
     if (slideshow?.items?.length) return slideshow.items[slideshow.idx1] || slideshow.items[0];
 
-    const results = element.tmdbData?.results;
-    if (!Array.isArray(results) || results.length === 0) return null;
-
-    if (element.type === 'tmdb-backdrop-slideshow') return results.find((item: any) => item.backdrop_path) || results[0];
-    if (element.type === 'tmdb-poster-scroll') return results.find((item: any) => item.poster_path) || results[0];
-    return results[0];
+    const items = this.getLimitedCollectionItems(element);
+    if (items.length > 0) return items[0];
+    return element.tmdbData || null;
   }
 
   private resolveItemTypeFromSourceItem(item: any, fallback?: TmdbCollectionType | TmdbItemType): TmdbItemType {
@@ -858,6 +972,18 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     if (mediaType === 'movie' || mediaType === 'tv' || mediaType === 'person') return mediaType;
     if (fallback === 'tv' || fallback === 'person') return fallback;
     return 'movie';
+  }
+
+  private detailKeyForItem(item: any, fallback?: TmdbCollectionType | TmdbItemType): string {
+    if (!item?.id) return '';
+    return `${this.resolveItemTypeFromSourceItem(item, fallback)}:${item.id}`;
+  }
+
+  private getCollectionItemDetail(sourceEl: CanvasElement, item: any): any {
+    if (!item) return null;
+    const details = sourceEl.tmdbData?.__detailsById || {};
+    const key = this.detailKeyForItem(item, sourceEl.tmdbCollectionType || sourceEl.tmdbItemType);
+    return details[key] || details[String(item.id)] || item;
   }
 
   private resolveTmdbSourceSelection(sourceEl: CanvasElement, sourceElementId: string, fallbackEl?: CanvasElement): { tmdbId: string; itemType: TmdbItemType } {
@@ -874,7 +1000,32 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   private propagateSourceItemToLinkedGroup(sourceElementId: string, sourceEl: CanvasElement, item: any) {
     if (!sourceEl.linkGroup || !item?.id) return;
     const itemType = this.resolveItemTypeFromSourceItem(item, sourceEl.tmdbCollectionType || sourceEl.tmdbItemType);
-    this.propagateTmdbId(sourceEl.linkGroup, String(item.id), itemType, sourceElementId);
+    const detail = this.getCollectionItemDetail(sourceEl, item);
+    const hasEnrichedDetail = detail && !Array.isArray(detail.results) && (
+      !!detail.credits ||
+      !!detail.images ||
+      !!detail.runtime ||
+      !!detail.tagline ||
+      !!detail.genres
+    );
+
+    this.elements.update(els => els.map(el => {
+      if (el.linkGroup !== sourceEl.linkGroup || el.id === sourceElementId || this.isCollectionElement(el)) return el;
+      return {
+        ...el,
+        tmdbId: String(item.id),
+        tmdbItemType: itemType,
+        tmdbData: detail || item
+      };
+    }));
+
+    if (!hasEnrichedDetail) {
+      this.elements().forEach(el => {
+        if (el.linkGroup === sourceEl.linkGroup && el.id !== sourceElementId && !this.isCollectionElement(el)) {
+          this.fetchTmdbDataForElement(el.id);
+        }
+      });
+    }
   }
 
   syncElementWithLayer(elementId: string, targetId: string) {
@@ -895,6 +1046,13 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     this.elements.update(els => els.map(el => {
       if (el.id === targetId) return { ...el, linkGroup: groupId };
       if (el.id === elementId) {
+        if (this.isCollectionElement(el)) {
+          return {
+            ...el,
+            linkGroup: groupId,
+            tmdbData: null
+          };
+        }
         return {
           ...el,
           linkGroup: groupId,
@@ -906,7 +1064,9 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
       return el;
     }));
 
-    if (tmdbId) this.propagateTmdbId(groupId, tmdbId, itemType, targetId);
+    if (this.isCollectionElement(targetEl)) this.fetchTmdbDataForElement(targetId);
+    if (this.isCollectionElement(sourceEl)) this.fetchTmdbDataForElement(elementId);
+    else if (tmdbId) this.propagateTmdbId(groupId, tmdbId, itemType, targetId);
     else this.fetchTmdbDataForElement(elementId);
     this.saveStateToHistory();
   }
@@ -970,6 +1130,59 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     this.http.get<any>(tvUrl, { headers }).pipe(catchError(() => of({genres: []})), takeUntil(this.destroy$)).subscribe(data => this.tmdbGenres.update(g => ({...g, tv: data.genres})));
   }
 
+  private buildTmdbDetailUrl(item: any, fallbackType: TmdbCollectionType | TmdbItemType): string {
+    const itemType = this.resolveItemTypeFromSourceItem(item, fallbackType);
+    const params = new URLSearchParams({
+      language: this.language(),
+      include_adult: this.includeAdult().toString(),
+      append_to_response: [
+        'credits', 'images', 'videos', 'content_ratings', 'release_dates',
+        'keywords', 'external_ids', 'recommendations', 'similar', 'reviews',
+        'lists', 'translations', 'watch/providers'
+      ].join(',')
+    });
+
+    if (this.authMethod() === 'v3') params.append('api_key', this.tmdbApiKey());
+    return `https://api.themoviedb.org/3/${itemType}/${item.id}?${params.toString()}`;
+  }
+
+  private enrichCollectionDataForLinkedScene(element: CanvasElement, data: any, headers: HttpHeaders): Observable<any> {
+    if (!data || !Array.isArray(data.results) || !this.hasLinkedDetailTargets(element)) return of(data);
+
+    const items = this.getLimitedCollectionItemsFromResults(element, data.results)
+      .filter((item: any) => item?.id)
+      .slice(0, this.getEffectiveCollectionItemLimit(element));
+
+    if (items.length === 0) return of(data);
+
+    const fallbackType = element.tmdbCollectionType || element.tmdbItemType || 'movie';
+    const requests = items.map((item: any) =>
+      this.http.get<any>(this.buildTmdbDetailUrl(item, fallbackType), { headers }).pipe(
+        catchError(() => of(item)),
+        map(detail => ({
+          key: this.detailKeyForItem(item, fallbackType),
+          altKey: String(item.id),
+          detail
+        } as TmdbDetailEntry))
+      )
+    );
+
+    return forkJoin(requests).pipe(
+      map(entries => {
+        const detailsById = entries.reduce((acc, entry) => {
+          if (entry.key) acc[entry.key] = entry.detail;
+          if (entry.altKey) acc[entry.altKey] = entry.detail;
+          return acc;
+        }, {} as Record<string, any>);
+
+        return {
+          ...data,
+          __detailsById: detailsById
+        };
+      })
+    );
+  }
+
   searchTmdb(query: string) { this.searchTerms.next(query); }
 
   selectTmdbItem(item: any) {
@@ -987,13 +1200,13 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
 
   propagateTmdbId(groupName: string, tmdbId: string, itemType: TmdbItemType, excludeElementId?: string) {
       this.elements.update(els => els.map(el => {
-          if (el.linkGroup === groupName && el.id !== excludeElementId) {
+          if (el.linkGroup === groupName && el.id !== excludeElementId && !this.isCollectionElement(el)) {
               return { ...el, tmdbId: tmdbId, tmdbItemType: itemType, tmdbData: null };
           }
           return el;
       }));
       this.elements().forEach(el => {
-          if (el.linkGroup === groupName && el.id !== excludeElementId) this.fetchTmdbDataForElement(el.id);
+          if (el.linkGroup === groupName && el.id !== excludeElementId && !this.isCollectionElement(el)) this.fetchTmdbDataForElement(el.id);
       });
       if (!excludeElementId) this.saveStateToHistory();
   }
@@ -1013,7 +1226,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
 
     let obs: Observable<any>;
 
-    if (element.tmdbId && element.tmdbItemType) {
+    if (element.tmdbId && element.tmdbItemType && !this.isCollectionElement(element)) {
         const append = [
             'credits', 'images', 'videos', 'content_ratings', 'release_dates',
             'keywords', 'external_ids', 'recommendations', 'similar', 'reviews',
@@ -1030,7 +1243,29 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
           if (element.discoverFilters.year) params.append(yearKey, element.discoverFilters.year.toString());
         }
         params.append('watch_region', this.watchRegion());
-        obs = this.http.get(`https://api.themoviedb.org/3/${element.tmdbEndpoint}?${params.toString()}`, { headers });
+        const itemLimit = this.getEffectiveCollectionItemLimit(element);
+        const pageCount = Math.ceil(itemLimit / 20);
+        const buildCollectionUrl = (page: number) => {
+          const pageParams = new URLSearchParams(params.toString());
+          pageParams.set('page', page.toString());
+          return `https://api.themoviedb.org/3/${element.tmdbEndpoint}?${pageParams.toString()}`;
+        };
+
+        if (pageCount > 1) {
+          obs = forkJoin(Array.from({ length: pageCount }, (_, index) => this.http.get<any>(buildCollectionUrl(index + 1), { headers }))).pipe(
+            map(responses => {
+              const first = responses[0] || {};
+              return {
+                ...first,
+                results: responses.flatMap(response => Array.isArray(response?.results) ? response.results : []).slice(0, itemLimit)
+              };
+            })
+          );
+        } else {
+          obs = this.http.get(buildCollectionUrl(1), { headers });
+        }
+
+        obs = obs.pipe(switchMap(data => this.enrichCollectionDataForLinkedScene(element, data, headers)));
     } else { return; }
 
     obs.pipe(catchError(() => of(null)), takeUntil(this.destroy$)).subscribe(data => {
@@ -1059,6 +1294,10 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
 
   setupPosterScroll(elementId: string) {
       if (this.posterScrollIntervals.has(elementId)) clearInterval(this.posterScrollIntervals.get(elementId));
+      const element = this.elements().find(e => e.id === elementId);
+      if (element) {
+        this.propagateSourceItemToLinkedGroup(elementId, element, this.getLimitedCollectionItems(element)[0]);
+      }
 
       // Simple auto-scroll simulation for editor
       const interval = setInterval(() => {
@@ -1081,16 +1320,45 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     const element = this.elements().find(e => e.id === elementId);
     if (!element?.tmdbData?.results) return;
 
-    const slideItems = element.tmdbData.results.filter((item: any) => item.backdrop_path).slice(0, 20);
+    const slideItems = this.getLimitedCollectionItems(element);
     const backdrops = slideItems.map((item: any) => 'https://image.tmdb.org/t/p/w1280' + item.backdrop_path);
     if (backdrops.length === 0) return;
 
-    this.slideshowState.update(s => ({...s, [elementId]: { idx1: 0, idx2: backdrops.length > 1 ? 1 : 0, fade: false, backdrops, items: slideItems }}));
+    this.slideshowState.update(s => ({...s, [elementId]: { idx1: 0, idx2: backdrops.length > 1 ? 1 : 0, fade: false, sceneFade: false, backdrops, items: slideItems }}));
     this.propagateSourceItemToLinkedGroup(elementId, element, slideItems[0]);
 
     if (backdrops.length < 2) return;
 
+    const advanceSlide = () => {
+        const el = this.elements().find(e => e.id === elementId);
+        const state = this.slideshowState()[elementId];
+        if (!state) return;
+
+        const nextItem = state.items[state.idx2];
+        if (el && nextItem) this.propagateSourceItemToLinkedGroup(elementId, el, nextItem);
+
+        this.slideshowState.update(s => {
+            const current = s[elementId];
+            if (!current) return s;
+            const nextNextIdx = (current.idx2 + 1) % current.backdrops.length;
+            return {...s, [elementId]: { ...current, idx1: current.idx2, idx2: nextNextIdx, fade: false, sceneFade: false } };
+        });
+        this.cdr.detectChanges();
+    };
+
     const interval = setInterval(() => {
+        const el = this.elements().find(e => e.id === elementId);
+        if (el && this.getEffectiveGlobalSceneFade(el)) {
+            this.slideshowState.update(s => {
+                const current = s[elementId];
+                if (!current) return s;
+                return {...s, [elementId]: { ...current, sceneFade: true, fade: false } };
+            });
+            this.cdr.detectChanges();
+            setTimeout(() => advanceSlide(), 650);
+            return;
+        }
+
         this.slideshowState.update(s => {
             const current = s[elementId];
             if (!current) return s;
@@ -1098,14 +1366,10 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
         });
         this.cdr.detectChanges();
 
-        const el = this.elements().find(e => e.id === elementId);
         const state = this.slideshowState()[elementId];
-        if (el && el.linkGroup && state.items && state.items.length > state.idx2) {
+        if (el && state.items && state.items.length > state.idx2) {
             const nextItem = state.items[state.idx2];
-            if (nextItem) {
-                 const itemType = this.resolveItemTypeFromSourceItem(nextItem, el.tmdbCollectionType || el.tmdbItemType);
-                 this.propagateTmdbId(el.linkGroup, String(nextItem.id), itemType, elementId);
-            }
+            if (nextItem) this.propagateSourceItemToLinkedGroup(elementId, el, nextItem);
         }
 
         setTimeout(() => {
@@ -1346,7 +1610,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
       if (!el.type.startsWith('tmdb-')) continue;
 
       let source: any | null = null;
-      if (el.tmdbId && el.tmdbItemType) {
+      if (el.tmdbId && el.tmdbItemType && !this.isCollectionElement(el)) {
         source = {
           kind: 'detail',
           itemType: el.tmdbItemType,
@@ -1359,7 +1623,8 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
           endpoint: el.tmdbEndpoint,
           collectionType: el.tmdbCollectionType || 'movie',
           discoverFilters: this.normalizeExportDiscoverFilters(el.discoverFilters),
-          enrichLinked: el.type === 'tmdb-backdrop-slideshow' && !!el.linkGroup && linkedCollectionGroups.has(el.linkGroup),
+          limit: this.getEffectiveCollectionItemLimit(el, elements),
+          enrichLinked: !!el.linkGroup && linkedCollectionGroups.has(el.linkGroup),
           ttl: 900
         };
       }
@@ -1466,13 +1731,30 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
         requestAnimationFrame(step);
     }
 
+    function getLinkedTargets(group, sourceElement) {
+        if (!group) return [];
+        return Array.from(document.querySelectorAll('[data-link-group]')).filter(target => {
+            if (target === sourceElement || target.dataset.linkGroup !== group) return false;
+            return target.dataset.type !== 'tmdb-backdrop-slideshow' && target.dataset.type !== 'tmdb-poster-scroll';
+        });
+    }
+
     function updateLinkedGroup(group, item, sourceElement) {
         if (!group || !item) return;
-        document.querySelectorAll('[data-link-group]').forEach(target => {
-            if (target === sourceElement || target.dataset.linkGroup !== group) return;
-            if (target.dataset.type === 'tmdb-backdrop-slideshow' || target.dataset.type === 'tmdb-poster-scroll') return;
-            renderElement(target, item);
-        });
+        getLinkedTargets(group, sourceElement).forEach(target => renderElement(target, item));
+    }
+
+    function withSceneFade(elements, updateFn) {
+        const targets = elements.filter(Boolean);
+        if (targets.length === 0) {
+            updateFn();
+            return;
+        }
+        targets.forEach(target => target.classList.add('scene-fade-active'));
+        setTimeout(() => {
+            updateFn();
+            requestAnimationFrame(() => targets.forEach(target => target.classList.remove('scene-fade-active')));
+        }, 650);
     }
 
     function renderGenres(el, item) {
@@ -1523,40 +1805,54 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
         const container = el.querySelector('.poster-scroll-container');
         if (!container) return;
         clearElement(container);
-        const results = Array.isArray(data && data.results) ? data.results : [];
+        const limit = Math.max(1, Math.min(40, Number(el.dataset.collectionLimit) || 20));
+        const results = Array.isArray(data && data.results) ? data.results.filter(item => item.poster_path).slice(0, limit) : [];
         results.forEach(item => {
-            if (!item.poster_path) return;
             const img = document.createElement('img');
             img.src = baseImgUrl + item.poster_path;
             img.className = 'scroll-img';
             img.alt = item.title || item.name || 'Poster';
             container.appendChild(img);
         });
+        if (results[0]) {
+            const fallbackType = data.__collectionType || el.dataset.itemType || 'movie';
+            updateLinkedGroup(el.dataset.linkGroup, detailForCollectionItem(data, results[0], fallbackType), el);
+        }
         startPosterAutoScroll(container);
     }
 
     function renderBackdropSlideshow(el, data) {
-        const results = Array.isArray(data && data.results) ? data.results.filter(item => item.backdrop_path) : [];
+        const limit = Math.max(1, Math.min(40, Number(el.dataset.collectionLimit) || 20));
+        const results = Array.isArray(data && data.results) ? data.results.filter(item => item.backdrop_path).slice(0, limit) : [];
         if (results.length === 0) return;
         const fallbackType = data.__collectionType || el.dataset.itemType || 'movie';
+        const globalSceneFade = el.dataset.globalSceneFade === 'true';
         let currentIdx = 0;
 
-        function applySlide(index) {
+        function applySlide(index, useSceneFade) {
             const item = results[index];
             const detail = detailForCollectionItem(data, item, fallbackType);
-            el.style.backgroundImage = 'url(' + baseBackdropUrl + item.backdrop_path + ')';
-            el.style.backgroundSize = 'cover';
-            el.style.backgroundPosition = 'center';
-            el.style.transition = 'background-image 1s ease-in-out';
-            updateLinkedGroup(el.dataset.linkGroup, detail, el);
+            const apply = () => {
+                el.style.backgroundImage = 'url(' + baseBackdropUrl + item.backdrop_path + ')';
+                el.style.backgroundSize = 'cover';
+                el.style.backgroundPosition = 'center';
+                el.style.transition = globalSceneFade ? 'opacity 0.6s ease' : 'background-image 1s ease-in-out';
+                updateLinkedGroup(el.dataset.linkGroup, detail, el);
+            };
+
+            if (useSceneFade && globalSceneFade) {
+                withSceneFade([el].concat(getLinkedTargets(el.dataset.linkGroup, el)), apply);
+            } else {
+                apply();
+            }
         }
 
-        applySlide(0);
+        applySlide(0, false);
         if (results.length > 1 && el.dataset.slideshowStarted !== 'true') {
             el.dataset.slideshowStarted = 'true';
             setInterval(() => {
                 currentIdx = (currentIdx + 1) % results.length;
-                applySlide(currentIdx);
+                applySlide(currentIdx, true);
             }, 5000);
         }
     }
@@ -1720,6 +2016,8 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
             ];
             if (sourceId) attrs.push(`data-source-id="${this.escapeHtml(sourceId)}"`);
             if (el.linkGroup) attrs.push(`data-link-group="${this.escapeHtml(el.linkGroup)}"`);
+            if (this.isCollectionElement(el)) attrs.push(`data-collection-limit="${this.getEffectiveCollectionItemLimit(el, visibleElements)}"`);
+            if (el.type === 'tmdb-backdrop-slideshow') attrs.push(`data-global-scene-fade="${this.getEffectiveGlobalSceneFade(el, visibleElements) ? 'true' : 'false'}"`);
             if (el.type === 'tmdb-dynamic-field') {
                 attrs.push(`data-data-path="${this.escapeHtml(el.dataPath || '')}"`);
                 attrs.push(`data-data-prefix="${this.escapeHtml(el.dataPrefix || '')}"`);
@@ -1783,7 +2081,7 @@ function tmdb_write_cache($file, $payload) {
     return @rename($tmp, $file);
 }
 
-function tmdb_build_url($source, $config) {
+function tmdb_build_url($source, $config, $page = 1) {
     $params = array(
         'language' => $config['lang'] ?: 'en-US',
         'include_adult' => !empty($config['adult']) ? 'true' : 'false'
@@ -1811,6 +2109,7 @@ function tmdb_build_url($source, $config) {
         }
     }
     $params['watch_region'] = $config['region'] ?: 'US';
+    $params['page'] = max(1, intval($page));
     return 'https://api.themoviedb.org/3/' . $endpoint . '?' . http_build_query($params);
 }
 
@@ -1855,14 +2154,30 @@ function tmdb_http_get_json($url, $config) {
 }
 
 function tmdb_fetch_source($source, $config) {
-    $data = tmdb_http_get_json(tmdb_build_url($source, $config), $config);
-    if (!$data) return null;
-
     if (($source['kind'] ?? '') === 'collection') {
+        $limit = max(1, min(40, intval($source['limit'] ?? 20)));
+        $pageCount = max(1, intval(ceil($limit / 20)));
+        $data = null;
+        $combinedResults = array();
+
+        for ($page = 1; $page <= $pageCount; $page++) {
+            $pageData = tmdb_http_get_json(tmdb_build_url($source, $config, $page), $config);
+            if (!$pageData) {
+                if ($page === 1) return null;
+                break;
+            }
+            if ($data === null) $data = $pageData;
+            if (!empty($pageData['results']) && is_array($pageData['results'])) {
+                $combinedResults = array_merge($combinedResults, $pageData['results']);
+            }
+        }
+
+        if (!$data) return null;
+        $data['results'] = array_slice($combinedResults, 0, $limit);
         $data['__collectionType'] = $source['collectionType'] ?? 'movie';
         if (!empty($source['enrichLinked']) && !empty($data['results']) && is_array($data['results'])) {
             $details = array();
-            foreach (array_slice($data['results'], 0, 20) as $item) {
+            foreach (array_slice($data['results'], 0, $limit) as $item) {
                 if (empty($item['id'])) continue;
                 $type = $item['media_type'] ?? ($source['collectionType'] ?? 'movie');
                 if (!in_array($type, array('movie', 'tv'), true)) continue;
@@ -1875,8 +2190,12 @@ function tmdb_fetch_source($source, $config) {
             }
             $data['__detailsById'] = $details;
         }
+
+        return $data;
     }
 
+    $data = tmdb_http_get_json(tmdb_build_url($source, $config), $config);
+    if (!$data) return null;
     return $data;
 }
 
@@ -2008,6 +2327,14 @@ ${cssRules}
         white-space: normal;
         line-height: 1.2;
         color: inherit;
+    }
+
+    [data-type^="tmdb-"] {
+        transition: opacity 0.6s ease;
+    }
+
+    .scene-fade-active {
+        opacity: 0 !important;
     }
 
     /* Hide scrollbars in scroll containers for clean look */
