@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.2.0 - Canvas Presets, Backdrop Fit, And Layer Sync
+
+This release improves the editor workflow for designing across TV, mobile, and tablet canvases. It adds real resolution presets, visible aspect ratio metadata, one-click backdrop sizing, and a discoverable Properties control for syncing TMDB layers to slideshows or other source layers.
+
+### Highlights
+
+- Default canvas is now TV landscape at `1280x720`.
+- Added resolution presets for TV, common mobile devices, and common tablets.
+- The toolbar now uses one compact resolution selector that shows current canvas size, aspect ratio, and preset name.
+- Moved zoom and `Fit` controls into a bottom-right canvas viewport overlay.
+- Added `Fill Width`, `Fill Height`, and `Cover Canvas` backdrop sizing actions that preserve TMDB's standard `16:9` backdrop aspect ratio.
+- Added a Properties-panel `Sync with layer` dropdown for TMDB elements so posters, titles, overviews, cast, ratings, and dynamic fields can follow another TMDB source layer.
+
+### Canvas Presets
+
+- Replaced fixed canvas base sizes with grouped device resolution presets.
+- Added `selectedResolutionId` to project autosave and JSON export.
+- Preserved compatibility with older saved projects that do not contain a resolution id by falling back to each device category's default resolution.
+- Switching device category, resolution, or orientation scales existing elements proportionally.
+- `Fit` now calculates zoom from the actual available editor viewport space instead of using fixed per-device zoom values.
+
+### Layer Sync And Backdrops
+
+- Added visible backdrop fit controls for `tmdb-backdrop` and `tmdb-backdrop-slideshow`.
+- Added a layer-sync dropdown that reuses the existing `linkGroup` model and drag-to-link behavior.
+- Synced elements copy the selected source layer's current TMDB item where possible, including the active slideshow item.
+- Backdrop slideshow state now keeps displayed backdrop images paired with the same TMDB result item, so synced posters and text fields update to the same movie or TV listing as the visible slide.
+- Linked slideshow groups now propagate their first visible item immediately, not only after the first slide interval.
+
+### Documentation
+
+- Updated README usage notes for device resolution presets, aspect ratio display, backdrop fit buttons, and Sync with layer.
+
 ## v1.1.0 - PHP Export Concurrency And Editor Reliability
 
 This release makes exported layouts safer for real production use. The generated PHP file now keeps TMDB credentials server-side, proxies TMDB requests through itself, and uses a local locked cache so multiple viewers can load the same layout without each browser hammering the TMDB API.

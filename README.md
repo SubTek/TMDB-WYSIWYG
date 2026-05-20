@@ -181,10 +181,15 @@ Add custom **prefix/suffix** text:
 ### 2. Set Canvas Size
 
 **Settings → Canvas Settings**
-- Choose a preset (Desktop/Tablet/Mobile)
-- Or set custom width × height
+- Choose a device category (Mobile/Tablet/TV)
+- Pick a resolution from the toolbar dropdown
+- Review the current size, aspect ratio, and device preset directly in the resolution selector
 - Enable grid overlay for precision
 - Toggle snap-to-grid
+
+Defaults are TV landscape at `1280×720` (`16:9`). TV presets include resolutions up to `1920×1080`, while mobile and tablet presets include common device sizes similar to browser device emulation tools.
+
+The zoom control lives in the bottom-right of the canvas viewport. Use **Fit** to scale the canvas to the available editor space while preserving the canvas aspect ratio.
 
 ### 3. Add Elements
 
@@ -218,6 +223,13 @@ Add custom **prefix/suffix** text:
 **To unlink:**
 - Click the 🔗 icon next to any layer in the Layers panel
 
+**Sync from Properties:**
+- Select any TMDB content element such as poster, title, overview, cast, rating, logo, or dynamic field
+- Open **Properties → TMDB Data Source → Sync with layer**
+- Choose a slideshow, poster scroll, or other TMDB source layer
+- The synced element will share that layer's data and can follow the current slideshow item
+- For backdrop slideshows, synced posters, titles, overviews, cast, ratings, logos, and dynamic fields update to the same TMDB item as the visible backdrop slide
+
 ### 6. Style Elements
 
 **Properties → Styles**
@@ -230,6 +242,11 @@ Add custom **prefix/suffix** text:
 - Copy/Paste styles between elements
 - Alignment shortcuts
 - Layer ordering
+
+**Backdrop sizing shortcuts:**
+- Select a TMDB backdrop or backdrop slideshow
+- Use **Fill Width**, **Fill Height**, or **Cover Canvas** in Properties
+- The element keeps TMDB's standard `16:9` backdrop ratio while fitting the current canvas
 
 ### 7. Work with Collections
 

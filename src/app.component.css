@@ -151,6 +151,54 @@ body {
   box-shadow: 0 0 0 1px var(--primary);
 }
 
+.canvas-resolution-select {
+  width: 20rem;
+  height: 2.25rem;
+  background-color: #071421;
+  border: 1px solid #183352;
+  color: #8eaec4;
+  border-radius: 0.25rem;
+  padding: 0 2rem 0 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.6875rem;
+  line-height: 1;
+  outline: none;
+}
+
+.canvas-resolution-select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
+.zoom-overlay {
+  background: rgba(6, 18, 30, 0.96);
+  border: 1px solid #183352;
+  border-radius: 0.375rem;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+  padding: 0.5rem 0.625rem;
+  backdrop-filter: blur(8px);
+}
+
+.zoom-overlay input[type=range] {
+  width: 7.25rem;
+  margin: 0;
+}
+
+.zoom-fit-button {
+  color: #01b4e4;
+  border: 1px solid rgba(1, 180, 228, 0.35);
+  background: rgba(1, 180, 228, 0.1);
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.6875rem;
+  line-height: 1;
+}
+
+.zoom-fit-button:hover {
+  color: #ffffff;
+  border-color: rgba(1, 180, 228, 0.7);
+}
+
 /* --- COMPONENT: RANGE SLIDERS --- */
 input[type=range] {
   -webkit-appearance: none;

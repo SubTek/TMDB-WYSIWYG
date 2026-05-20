@@ -249,23 +249,25 @@
 
         <div class="h-6 w-px bg-[#183352]"></div>
 
+        <select
+            [ngModel]="selectedResolutionId()"
+            (ngModelChange)="changeCanvasResolution($event)"
+            class="canvas-resolution-select"
+            title="Canvas resolution preset">
+            @for(option of availableCanvasResolutions(); track option.id) {
+                <option [value]="option.id">
+                    {{ option.id === selectedResolutionId() ? canvasConfig().width : option.width }} × {{ option.id === selectedResolutionId() ? canvasConfig().height : option.height }} · {{ option.aspectRatio }} · {{ option.name }}
+                </option>
+            }
+        </select>
+
+        <div class="h-6 w-px bg-[#183352]"></div>
+
         <div class="flex items-center gap-2 bg-[#0d253f] p-1 rounded-lg border border-[#183352]">
             <button (click)="changeCanvasMode(undefined, 'portrait')" class="p-2 rounded hover:bg-[#1b3a57] text-[#8eaec4] hover:text-white transition-colors" [class.bg-[#1b3a57]]="orientation() === 'portrait'" [class.text-white]="orientation() === 'portrait'" title="Portrait"><i class="fa-solid fa-file-image"></i></button>
             <button (click)="changeCanvasMode(undefined, 'landscape')" class="p-2 rounded hover:bg-[#1b3a57] text-[#8eaec4] hover:text-white transition-colors" [class.bg-[#1b3a57]]="orientation() === 'landscape'" [class.text-white]="orientation() === 'landscape'" title="Landscape"><i class="fa-solid fa-image"></i></button>
         </div>
 
-        <div class="h-6 w-px bg-[#183352]"></div>
-
-        <div class="flex items-center gap-2">
-            <i class="fa-solid fa-magnifying-glass text-xs text-[#64839e]"></i>
-            <input type="range" min="0.1" max="2" step="0.05" [ngModel]="zoomLevel()" (ngModelChange)="zoomLevel.set(+$event)" class="w-24 h-1 bg-[#183352] rounded appearance-none" title="Zoom">
-            <span class="text-[10px] w-8 text-[#8eaec4] font-mono">{{Math.round(zoomLevel() * 100)}}%</span>
-            <button (click)="fitCanvasToScreen()" class="text-xs text-[#01b4e4] hover:text-white px-2 py-1 rounded border border-[#01b4e4]/30 bg-[#01b4e4]/10">Fit</button>
-        </div>
-
-        <div class="text-xs text-[#64839e] font-mono ml-2 whitespace-nowrap">
-            {{canvasConfig().width}} &times; {{canvasConfig().height}}
-        </div>
       </div>
 
       <div class="flex items-center gap-3">
@@ -385,6 +387,13 @@
           }
         }
       </div>
+
+      <div class="zoom-overlay absolute right-5 bottom-5 z-30 flex items-center gap-2" (click)="$event.stopPropagation()" title="Canvas zoom">
+          <i class="fa-solid fa-magnifying-glass text-xs text-[#8eaec4]"></i>
+          <input type="range" min="0.1" max="2" step="0.05" [ngModel]="zoomLevel()" (ngModelChange)="zoomLevel.set(+$event)" title="Zoom">
+          <span class="text-[10px] w-8 text-[#8eaec4] font-mono">{{Math.round(zoomLevel() * 100)}}%</span>
+          <button (click)="fitCanvasToScreen()" class="zoom-fit-button" title="Fit canvas to available viewport space">Fit</button>
+      </div>
     </div>
   </div>
 
@@ -499,6 +508,20 @@
                 <details class="accordion" open>
                   <summary>TMDB Data Source</summary>
                   <div class="accordion-content space-y-4">
+                    <div class="input-group">
+                        <label class="label flex justify-between items-center">
+                            Sync with layer
+                            <span class="text-[10px] font-normal text-[#01b4e4]" title="Use another TMDB layer as this element's source, including the current slideshow item.">?</span>
+                        </label>
+                        <select [ngModel]="selectedSyncLayerId(el)" (ngModelChange)="syncElementWithLayer(el.id, $event)" class="select text-xs">
+                            <option value="">Not synced</option>
+                            @for(option of syncLayerOptions(); track option.id) {
+                                <option [value]="option.id">{{ formatTypeName(option.type) }} · {{ option.linkGroup ? option.linkGroup.replace('group_', 'Group ') : 'Layer ' + option.id.replace('el_', '') }}</option>
+                            }
+                        </select>
+                        <p class="text-[10px] text-[#64839e] mt-1">Synced TMDB layers share a source and can follow the current slideshow item.</p>
+                    </div>
+
                     @if(el.type.includes('scroll') || el.type.includes('slideshow')) {
                       <div class="input-group">
                         <label class="label">Collection Type</label>
@@ -640,6 +663,16 @@
               <details class="accordion" open>
                 <summary>Layout & Position</summary>
                 <div class="accordion-content">
+                  @if(['tmdb-backdrop', 'tmdb-backdrop-slideshow'].includes(el.type)) {
+                    <div class="mb-4 p-3 bg-[#0a1724] rounded border border-[#254261]">
+                        <label class="label">Backdrop Fit</label>
+                        <div class="grid grid-cols-3 gap-2">
+                            <button (click)="fitBackdropToCanvas(el.id, 'width')" class="btn btn-secondary px-2 py-1 text-xs" title="Fill canvas width and preserve 16:9">Fill Width</button>
+                            <button (click)="fitBackdropToCanvas(el.id, 'height')" class="btn btn-secondary px-2 py-1 text-xs" title="Fill canvas height and preserve 16:9">Fill Height</button>
+                            <button (click)="fitBackdropToCanvas(el.id, 'cover')" class="btn btn-secondary px-2 py-1 text-xs" title="Cover the canvas and preserve 16:9">Cover Canvas</button>
+                        </div>
+                    </div>
+                  }
                   <div class="grid grid-cols-2 gap-3 mb-3">
                     <div><label class="label">X Position</label><input type="number" [ngModel]="el.x" (ngModelChange)="updateElementProperty('x', +$event)" class="input"></div>
                     <div><label class="label">Y Position</label><input type="number" [ngModel]="el.y" (ngModelChange)="updateElementProperty('y', +$event)" class="input"></div>

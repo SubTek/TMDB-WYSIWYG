@@ -16,6 +16,7 @@ interface DiscoverFilters { sortBy: string; genres: number[]; year: number | nul
 
 type TmdbItemType = 'movie' | 'tv' | 'person';
 type TmdbCollectionType = 'movie' | 'tv' | 'mixed';
+type CanvasPreset = 'mobile' | 'tablet' | 'tv';
 type ElementType =
   | 'text' | 'image' | 'shape'
   | 'tmdb-poster' | 'tmdb-backdrop' | 'tmdb-title' | 'tmdb-overview'
@@ -25,6 +26,15 @@ type ElementType =
   | 'tmdb-dynamic-field';
 
 type ImageFit = 'cover' | 'contain' | 'fill';
+type BackdropFitMode = 'width' | 'height' | 'cover';
+
+interface CanvasResolutionPreset {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  aspectRatio: string;
+}
 
 interface CanvasElement {
   id: string;
@@ -137,13 +147,36 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   includeAdult = signal<boolean>(localStorage.getItem('tmdbIncludeAdult') === 'true');
 
   // UI State
-  canvasBaseSizes = {
-      mobile: { width: 375, height: 667 },
-      tablet: { width: 768, height: 1024 },
-      tv: { width: 1920, height: 1080 }
+  readonly defaultResolutionByPreset: Record<CanvasPreset, string> = {
+      mobile: 'iphone-12-13-14',
+      tablet: 'ipad-air',
+      tv: 'tv-720'
   };
-  selectedPreset = signal<'mobile' | 'tablet' | 'tv'>('mobile');
-  orientation = signal<'portrait' | 'landscape'>('portrait');
+  readonly canvasResolutionPresets: Record<CanvasPreset, CanvasResolutionPreset[]> = {
+      mobile: [
+          { id: 'iphone-se', name: 'iPhone SE', width: 375, height: 667, aspectRatio: '9:16' },
+          { id: 'iphone-12-13-14', name: 'iPhone 12/13/14', width: 390, height: 844, aspectRatio: '19.5:9' },
+          { id: 'pixel-7', name: 'Pixel 7', width: 412, height: 915, aspectRatio: '20:9' },
+          { id: 'galaxy-s20-ultra', name: 'Galaxy S20 Ultra', width: 412, height: 915, aspectRatio: '20:9' },
+          { id: 'galaxy-fold', name: 'Galaxy Fold', width: 280, height: 653, aspectRatio: '21:9' }
+      ],
+      tablet: [
+          { id: 'ipad-mini', name: 'iPad Mini', width: 768, height: 1024, aspectRatio: '3:4' },
+          { id: 'ipad-air', name: 'iPad Air', width: 820, height: 1180, aspectRatio: '59:41' },
+          { id: 'ipad-pro-11', name: 'iPad Pro 11"', width: 834, height: 1194, aspectRatio: '199:139' },
+          { id: 'ipad-pro-12-9', name: 'iPad Pro 12.9"', width: 1024, height: 1366, aspectRatio: '4:3' },
+          { id: 'surface-pro-7', name: 'Surface Pro 7', width: 912, height: 1368, aspectRatio: '3:2' }
+      ],
+      tv: [
+          { id: 'tv-720', name: 'HD TV', width: 1280, height: 720, aspectRatio: '16:9' },
+          { id: 'tv-768', name: 'WXGA TV', width: 1366, height: 768, aspectRatio: '16:9' },
+          { id: 'tv-900', name: 'HD+ TV', width: 1600, height: 900, aspectRatio: '16:9' },
+          { id: 'tv-1080', name: 'Full HD TV', width: 1920, height: 1080, aspectRatio: '16:9' }
+      ]
+  };
+  selectedPreset = signal<CanvasPreset>('tv');
+  selectedResolutionId = signal<string>(this.defaultResolutionByPreset.tv);
+  orientation = signal<'portrait' | 'landscape'>('landscape');
   zoomLevel = signal<number>(1);
 
   history = signal<HistoryState[]>([]);
@@ -164,18 +197,18 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   isSearching = signal(false);
 
   // --- COMPUTED SIGNALS ---
+  availableCanvasResolutions = computed(() => this.canvasResolutionPresets[this.selectedPreset()]);
+  selectedResolution = computed(() => this.getResolutionPreset(this.selectedPreset(), this.selectedResolutionId()));
   canvasConfig = computed(() => {
-      const base = this.canvasBaseSizes[this.selectedPreset()];
+      const base = this.selectedResolution();
       let w = base.width;
       let h = base.height;
+      const baseIsLandscape = base.width >= base.height;
 
-      if (this.selectedPreset() === 'tv') {
-          if (this.orientation() === 'portrait') { w = base.height; h = base.width; }
-      } else {
-          if (this.orientation() === 'landscape') { w = base.height; h = base.width; }
-      }
+      if (this.orientation() === 'landscape' && !baseIsLandscape) { w = base.height; h = base.width; }
+      if (this.orientation() === 'portrait' && baseIsLandscape) { w = base.height; h = base.width; }
 
-      return { width: w, height: h, scale: this.zoomLevel() };
+      return { width: w, height: h, scale: this.zoomLevel(), aspectRatio: base.aspectRatio, name: base.name };
   });
 
   selectedElement = computed(() => this.elements().find(el => el.id === this.selectedElementId()));
@@ -214,6 +247,22 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     if (!el || el.tmdbEndpoint !== `discover/${el.tmdbCollectionType}`) return [];
     return this.tmdbGenres()[el.tmdbCollectionType as 'movie' | 'tv'] || [];
   });
+
+  syncLayerOptions = computed(() => {
+    const selected = this.selectedElement();
+    if (!selected || !selected.type.startsWith('tmdb-')) return [];
+    return this.elements()
+      .filter(el => el.id !== selected.id && el.type.startsWith('tmdb-'))
+      .sort((a, b) => {
+        const priority = (el: CanvasElement) => el.type === 'tmdb-backdrop-slideshow' ? 0 : (el.type === 'tmdb-poster-scroll' ? 1 : 2);
+        return priority(a) - priority(b) || a.zIndex - b.zIndex;
+      });
+  });
+
+  selectedSyncLayerId(element: CanvasElement): string {
+    if (!element.linkGroup) return '';
+    return this.syncLayerOptions().find(option => option.linkGroup === element.linkGroup)?.id || '';
+  }
 
   isImageElement(elementId: string | null): boolean {
       if (!elementId) return false;
@@ -302,13 +351,14 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
       this.cdr.detectChanges();
     });
 
-    if (!this.restoredProjectFromStorage) this.fitCanvasToScreen();
-
     // Initial check if keys exist
     if(this.isApiConfigured()) this.authCheckSubject.next();
   }
 
-  ngAfterViewInit() { this.setupInteract(); }
+  ngAfterViewInit() {
+    this.setupInteract();
+    if (!this.restoredProjectFromStorage) setTimeout(() => this.fitCanvasToScreen());
+  }
   ngOnDestroy() {
       this.destroy$.next();
       this.destroy$.complete();
@@ -401,27 +451,25 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   // --- CANVAS CONTROLS ---
-  changeCanvasMode(newPreset?: 'mobile' | 'tablet' | 'tv', newOrientation?: 'portrait' | 'landscape') {
-      const currentConfig = this.canvasConfig();
-      const oldW = currentConfig.width;
-      const oldH = currentConfig.height;
+  private getResolutionPreset(preset: CanvasPreset, resolutionId?: string): CanvasResolutionPreset {
+      const presets = this.canvasResolutionPresets[preset];
+      return presets.find(option => option.id === resolutionId) || presets.find(option => option.id === this.defaultResolutionByPreset[preset]) || presets[0];
+  }
 
-      const targetPreset = newPreset || this.selectedPreset();
-      const targetOrientation = newOrientation || this.orientation();
+  private getCanvasDimensions(preset: CanvasPreset, resolutionId: string, orientation: 'portrait' | 'landscape') {
+      const base = this.getResolutionPreset(preset, resolutionId);
+      let width = base.width;
+      let height = base.height;
+      const baseIsLandscape = base.width >= base.height;
 
-      const base = this.canvasBaseSizes[targetPreset];
-      let newW = base.width;
-      let newH = base.height;
+      if (orientation === 'landscape' && !baseIsLandscape) { width = base.height; height = base.width; }
+      if (orientation === 'portrait' && baseIsLandscape) { width = base.height; height = base.width; }
 
-      if (targetPreset === 'tv') {
-          if (targetOrientation === 'portrait') { newW = base.height; newH = base.width; }
-      } else {
-          if (targetOrientation === 'landscape') { newW = base.height; newH = base.width; }
-      }
+      return { width, height };
+  }
 
-      if(newPreset) this.selectedPreset.set(newPreset);
-      if(newOrientation) this.orientation.set(newOrientation);
-
+  private scaleElementsToCanvas(oldW: number, oldH: number, newW: number, newH: number) {
+      if (oldW === newW && oldH === newH) return;
       const scaleX = newW / oldW;
       const scaleY = newH / oldH;
 
@@ -436,16 +484,57 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
               fontSize: el.styles.fontSize * ((scaleX + scaleY) / 2)
           }
       })));
+  }
 
+  changeCanvasMode(newPreset?: CanvasPreset, newOrientation?: 'portrait' | 'landscape') {
+      const currentConfig = this.canvasConfig();
+      const oldW = currentConfig.width;
+      const oldH = currentConfig.height;
+
+      const targetPreset = newPreset || this.selectedPreset();
+      const targetOrientation = newOrientation || this.orientation();
+      const targetResolution = newPreset ? this.defaultResolutionByPreset[targetPreset] : this.selectedResolutionId();
+      const { width: newW, height: newH } = this.getCanvasDimensions(targetPreset, targetResolution, targetOrientation);
+
+      if(newPreset) this.selectedPreset.set(newPreset);
+      if(newPreset) this.selectedResolutionId.set(targetResolution);
+      if(newOrientation) this.orientation.set(newOrientation);
+
+      this.scaleElementsToCanvas(oldW, oldH, newW, newH);
       this.fitCanvasToScreen(targetPreset);
       this.saveStateToHistory();
   }
 
-  fitCanvasToScreen(presetOverride?: 'mobile' | 'tablet' | 'tv') {
-      const preset = presetOverride || this.selectedPreset();
-      if (preset === 'tv') this.zoomLevel.set(0.45);
-      else if (preset === 'tablet') this.zoomLevel.set(0.75);
-      else this.zoomLevel.set(1.0);
+  changeCanvasResolution(resolutionId: string) {
+      const currentConfig = this.canvasConfig();
+      const { width: newW, height: newH } = this.getCanvasDimensions(this.selectedPreset(), resolutionId, this.orientation());
+
+      this.selectedResolutionId.set(resolutionId);
+      this.scaleElementsToCanvas(currentConfig.width, currentConfig.height, newW, newH);
+      this.fitCanvasToScreen();
+      this.saveStateToHistory();
+  }
+
+  fitCanvasToScreen(presetOverride?: CanvasPreset) {
+      const viewport = document.getElementById('canvas-bg');
+      const { width, height } = this.canvasConfig();
+
+      if (!viewport) {
+          const preset = presetOverride || this.selectedPreset();
+          if (preset === 'tv') this.zoomLevel.set(0.45);
+          else if (preset === 'tablet') this.zoomLevel.set(0.75);
+          else this.zoomLevel.set(1.0);
+          return;
+      }
+
+      const styles = window.getComputedStyle(viewport);
+      const paddingX = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+      const paddingY = parseFloat(styles.paddingTop) + parseFloat(styles.paddingBottom);
+      const availableWidth = Math.max(1, viewport.clientWidth - paddingX - 48);
+      const availableHeight = Math.max(1, viewport.clientHeight - paddingY - 72);
+      const fitScale = Math.min(availableWidth / width, availableHeight / height);
+      const clampedScale = Math.min(2, Math.max(0.1, fitScale));
+      this.zoomLevel.set(Math.round(clampedScale * 100) / 100);
   }
 
   // --- PROJECT PERSISTENCE ---
@@ -454,6 +543,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
       version: 1,
       canvas: {
         selectedPreset: this.selectedPreset(),
+        selectedResolutionId: this.selectedResolutionId(),
         orientation: this.orientation(),
         zoomLevel: this.zoomLevel()
       },
@@ -483,10 +573,12 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
 
     const validPresets = ['mobile', 'tablet', 'tv'] as const;
     const validOrientations = ['portrait', 'landscape'] as const;
-    const preset = project.canvas?.selectedPreset;
+    const preset = validPresets.includes(project.canvas?.selectedPreset) ? project.canvas.selectedPreset as CanvasPreset : this.selectedPreset();
+    const resolutionId = project.canvas?.selectedResolutionId;
     const orientation = project.canvas?.orientation;
 
-    if (validPresets.includes(preset)) this.selectedPreset.set(preset);
+    this.selectedPreset.set(preset);
+    this.selectedResolutionId.set(this.getResolutionPreset(preset, resolutionId).id);
     if (validOrientations.includes(orientation)) this.orientation.set(orientation);
     if (typeof project.canvas?.zoomLevel === 'number') this.zoomLevel.set(project.canvas.zoomLevel);
 
@@ -676,6 +768,40 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
       this.contextMenu.update(cm => ({ ...cm, visible: false }));
   }
 
+  fitBackdropToCanvas(id: string, mode: BackdropFitMode) {
+    const { width: canvasW, height: canvasH } = this.canvasConfig();
+    const backdropRatio = 16 / 9;
+    let width = canvasW;
+    let height = canvasW / backdropRatio;
+
+    if (mode === 'height') {
+      height = canvasH;
+      width = canvasH * backdropRatio;
+    } else if (mode === 'cover') {
+      const widthBasedHeight = canvasW / backdropRatio;
+      const heightBasedWidth = canvasH * backdropRatio;
+      if (widthBasedHeight >= canvasH) {
+        width = canvasW;
+        height = widthBasedHeight;
+      } else {
+        width = heightBasedWidth;
+        height = canvasH;
+      }
+    }
+
+    this.elements.update(els => els.map(el => {
+      if (el.id !== id) return el;
+      return {
+        ...el,
+        x: (canvasW - width) / 2,
+        y: (canvasH - height) / 2,
+        width,
+        height
+      };
+    }));
+    this.saveStateToHistory();
+  }
+
   updateDiscoverFilter(prop: keyof DiscoverFilters, value: any) { this.updateSelectedElement(el => { el.discoverFilters = { ...el.discoverFilters, [prop]: value }; }); }
 
   toggleDiscoverGenre(elementId: string, genreId: number, checked: boolean) {
@@ -715,6 +841,76 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     this.saveStateToHistory();
   }
 
+  private getCurrentTmdbSourceItem(elementId: string, element: CanvasElement): any | null {
+    const slideshow = this.slideshowState()[elementId];
+    if (slideshow?.items?.length) return slideshow.items[slideshow.idx1] || slideshow.items[0];
+
+    const results = element.tmdbData?.results;
+    if (!Array.isArray(results) || results.length === 0) return null;
+
+    if (element.type === 'tmdb-backdrop-slideshow') return results.find((item: any) => item.backdrop_path) || results[0];
+    if (element.type === 'tmdb-poster-scroll') return results.find((item: any) => item.poster_path) || results[0];
+    return results[0];
+  }
+
+  private resolveItemTypeFromSourceItem(item: any, fallback?: TmdbCollectionType | TmdbItemType): TmdbItemType {
+    const mediaType = item?.media_type;
+    if (mediaType === 'movie' || mediaType === 'tv' || mediaType === 'person') return mediaType;
+    if (fallback === 'tv' || fallback === 'person') return fallback;
+    return 'movie';
+  }
+
+  private resolveTmdbSourceSelection(sourceEl: CanvasElement, sourceElementId: string, fallbackEl?: CanvasElement): { tmdbId: string; itemType: TmdbItemType } {
+    const currentItem = this.getCurrentTmdbSourceItem(sourceElementId, sourceEl);
+    const rawId = currentItem?.id ?? sourceEl.tmdbId ?? sourceEl.tmdbData?.id ?? fallbackEl?.tmdbId ?? '';
+    const fallbackType = currentItem ? (sourceEl.tmdbCollectionType || sourceEl.tmdbItemType) : (sourceEl.tmdbItemType || fallbackEl?.tmdbItemType || 'movie');
+
+    return {
+      tmdbId: rawId ? String(rawId) : '',
+      itemType: this.resolveItemTypeFromSourceItem(currentItem, fallbackType)
+    };
+  }
+
+  private propagateSourceItemToLinkedGroup(sourceElementId: string, sourceEl: CanvasElement, item: any) {
+    if (!sourceEl.linkGroup || !item?.id) return;
+    const itemType = this.resolveItemTypeFromSourceItem(item, sourceEl.tmdbCollectionType || sourceEl.tmdbItemType);
+    this.propagateTmdbId(sourceEl.linkGroup, String(item.id), itemType, sourceElementId);
+  }
+
+  syncElementWithLayer(elementId: string, targetId: string) {
+    if (!targetId) {
+      this.elements.update(els => els.map(el => el.id === elementId ? { ...el, linkGroup: '', tmdbData: null } : el));
+      this.saveStateToHistory();
+      return;
+    }
+
+    const allElements = this.elements();
+    const targetEl = allElements.find(el => el.id === targetId);
+    const sourceEl = allElements.find(el => el.id === elementId);
+    if (!targetEl || !sourceEl) return;
+
+    const groupId = targetEl.linkGroup || ('group_' + Date.now().toString(36));
+    const { tmdbId, itemType } = this.resolveTmdbSourceSelection(targetEl, targetId, sourceEl);
+
+    this.elements.update(els => els.map(el => {
+      if (el.id === targetId) return { ...el, linkGroup: groupId };
+      if (el.id === elementId) {
+        return {
+          ...el,
+          linkGroup: groupId,
+          tmdbId,
+          tmdbItemType: itemType,
+          tmdbData: null
+        };
+      }
+      return el;
+    }));
+
+    if (tmdbId) this.propagateTmdbId(groupId, tmdbId, itemType, targetId);
+    else this.fetchTmdbDataForElement(elementId);
+    this.saveStateToHistory();
+  }
+
   // --- DRAG & DROP LAYERS (GROUPING) ---
   onLayerDragStart(event: DragEvent, elementId: string) {
     this.draggedLayerId.set(elementId);
@@ -744,21 +940,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   linkElements(sourceId: string, targetId: string) {
-    const allElements = this.elements();
-    const sourceEl = allElements.find(e => e.id === sourceId);
-    const targetEl = allElements.find(e => e.id === targetId);
-    if (!sourceEl || !targetEl) return;
-    let groupId = targetEl.linkGroup;
-    if (!groupId) {
-      groupId = 'group_' + Date.now().toString(36);
-      this.elements.update(els => els.map(el => el.id === targetId ? { ...el, linkGroup: groupId } : el));
-    }
-    this.elements.update(els => els.map(el => {
-      if (el.id === sourceId) return { ...el, linkGroup: groupId, tmdbId: targetEl.tmdbId, tmdbItemType: targetEl.tmdbItemType, tmdbData: null };
-      return el;
-    }));
-    this.fetchTmdbDataForElement(sourceId);
-    this.saveStateToHistory();
+    this.syncElementWithLayer(sourceId, targetId);
   }
 
   unlinkElement(id: string, event: MouseEvent) {
@@ -899,11 +1081,14 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     const element = this.elements().find(e => e.id === elementId);
     if (!element?.tmdbData?.results) return;
 
-    const items = element.tmdbData.results;
-    const backdrops = items.map((item: any) => item.backdrop_path).filter(Boolean).slice(0, 20).map((path: string) => 'https://image.tmdb.org/t/p/w1280' + path);
-    if (backdrops.length < 2) return;
+    const slideItems = element.tmdbData.results.filter((item: any) => item.backdrop_path).slice(0, 20);
+    const backdrops = slideItems.map((item: any) => 'https://image.tmdb.org/t/p/w1280' + item.backdrop_path);
+    if (backdrops.length === 0) return;
 
-    this.slideshowState.update(s => ({...s, [elementId]: { idx1: 0, idx2: 1, fade: false, backdrops, items }}));
+    this.slideshowState.update(s => ({...s, [elementId]: { idx1: 0, idx2: backdrops.length > 1 ? 1 : 0, fade: false, backdrops, items: slideItems }}));
+    this.propagateSourceItemToLinkedGroup(elementId, element, slideItems[0]);
+
+    if (backdrops.length < 2) return;
 
     const interval = setInterval(() => {
         this.slideshowState.update(s => {
@@ -918,8 +1103,8 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
         if (el && el.linkGroup && state.items && state.items.length > state.idx2) {
             const nextItem = state.items[state.idx2];
             if (nextItem) {
-                 const itemType = nextItem.media_type || el.tmdbCollectionType || 'movie';
-                 this.propagateTmdbId(el.linkGroup, nextItem.id, itemType as TmdbItemType, elementId);
+                 const itemType = this.resolveItemTypeFromSourceItem(nextItem, el.tmdbCollectionType || el.tmdbItemType);
+                 this.propagateTmdbId(el.linkGroup, String(nextItem.id), itemType, elementId);
             }
         }
 
