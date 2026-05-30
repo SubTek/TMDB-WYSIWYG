@@ -342,7 +342,7 @@
               [style.backgroundColor]="!element.styles.backgroundGradient ? hexToRgba(element.styles.backgroundColor, element.styles.backgroundOpacity ?? 1) : null"
               [style.backgroundImage]="element.styles.backgroundGradient ? 'linear-gradient(' + element.styles.backgroundGradient.angle + 'deg, ' + element.styles.backgroundGradient.from + ', ' + element.styles.backgroundGradient.to + ')' : null"
               [style.color]="element.styles.color" [style.fontFamily]="element.styles.fontFamily"
-              [style.fontSize.px]="element.styles.fontSize" [style.fontWeight]="element.styles.fontWeight"
+              [style.fontSize]="formatElementFontSize(element)" [style.fontWeight]="element.styles.fontWeight"
               [style.textAlign]="element.styles.textAlign" [style.borderRadius.px]="element.styles.borderRadius"
               [style.borderWidth.px]="element.styles.borderWidth" [style.borderColor]="element.styles.borderColor"
               [style.opacity]="isElementInGlobalSceneFade(element) ? 0 : element.styles.opacity"
@@ -354,7 +354,7 @@
               (mousedown)="selectElementFromPointer($event, element.id)"
               (contextmenu)="openContextMenu($event, element.id)">
 
-                @if (isElementSelected(element.id) && !previewMode()) {
+                @if (isElementSelected(element.id) && !previewMode() && canResizeElement(element)) {
                     <div class="absolute -right-1 -bottom-1 w-3 h-3 bg-white rounded-full z-50 cursor-se-resize shadow-sm"></div>
                 }
 
@@ -367,7 +367,7 @@
                           @if (element.tmdbData) {
                               {{ element.dataPrefix }}{{ resolveDataPath(element.tmdbData, element.dataPath || '') }}{{ element.dataSuffix }}
                           } @else {
-                              <span class="opacity-50 text-xs italic">{{ element.dataPath || 'Select Data Path' }}</span>
+                              <span class="opacity-50 italic">{{ element.dataPath || 'Select Data Path' }}</span>
                           }
                       </div>
                   }
@@ -376,13 +376,13 @@
                   @case ('tmdb-backdrop') { @if (element.tmdbData?.backdrop_path) { <img [src]="'https://image.tmdb.org/t/p/w1280' + element.tmdbData.backdrop_path" class="w-full h-full pointer-events-none" [style.object-fit]="element.imageFit"> } @else { <div class="w-full h-full flex items-center justify-center bg-[#183352] text-[#64839e]"><i class="fa-solid fa-image text-4xl"></i></div> } }
                   @case ('tmdb-logo') { @if (getBestLogo(element)) { <img [src]="getBestLogo(element)" class="w-full h-full p-2 pointer-events-none" [style.object-fit]="element.imageFit"> } @else { <div class="w-full h-full flex items-center justify-center border-2 border-dashed border-[#254261] text-[#64839e]"><span class="font-bold text-xl">LOGO</span></div> } }
                   @case ('tmdb-title') { <div class="p-2 w-full h-full pointer-events-none leading-tight">{{ element.tmdbData?.title || element.tmdbData?.name || 'Movie Title' }}</div> }
-                  @case ('tmdb-overview') { <div class="p-2 text-xs overflow-hidden h-full w-full pointer-events-none">{{ element.tmdbData?.overview || 'Overview text placeholder...' }}</div> }
-                  @case ('tmdb-tagline') { <div class="p-2 text-sm italic opacity-80 w-full h-full pointer-events-none">{{ element.tmdbData?.tagline || 'Tagline goes here...' }}</div> }
+                  @case ('tmdb-overview') { <div class="p-2 overflow-hidden h-full w-full pointer-events-none">{{ element.tmdbData?.overview || 'Overview text placeholder...' }}</div> }
+                  @case ('tmdb-tagline') { <div class="p-2 italic opacity-80 w-full h-full pointer-events-none">{{ element.tmdbData?.tagline || 'Tagline goes here...' }}</div> }
                   @case ('tmdb-release-date') { <div class="p-2 w-full h-full pointer-events-none">{{ element.tmdbData?.release_date || element.tmdbData?.first_air_date || '2024-01-01' }}</div> }
                   @case ('tmdb-runtime') { <div class="p-2 w-full h-full pointer-events-none">{{ (element.tmdbData?.runtime ?? element.tmdbData?.episode_run_time?.[0]) ? (element.tmdbData.runtime ?? element.tmdbData.episode_run_time[0]) + ' min' : '120 min' }}</div> }
                   @case ('tmdb-season-episode-count') { <div class="p-2 w-full h-full flex items-center justify-center pointer-events-none">{{ element.tmdbData?.number_of_seasons ? element.tmdbData.number_of_seasons + ' Seasons' : 'Seasons / Episodes' }}</div> }
                   @case ('tmdb-network-logo') { @if (getBestNetworkLogo(element)) { <img [src]="getBestNetworkLogo(element)" class="w-full h-full p-2 pointer-events-none" [style.object-fit]="element.imageFit"> } @else { <div class="w-full h-full flex items-center justify-center bg-white/10"><i class="fa-solid fa-tv text-2xl"></i></div> } }
-                  @case ('tmdb-rating') { <div class="p-2 text-lg text-yellow-400 pointer-events-none"> @if(element.tmdbData?.vote_average){ @for(i of [].constructor(Math.round(element.tmdbData.vote_average/2)); track i){<span>★</span>} @for(i of [].constructor(5 - Math.round(element.tmdbData.vote_average/2)); track i){<span class="opacity-30">★</span>} } @else { <span>★★★★☆</span> } </div> }
+                  @case ('tmdb-rating') { <div class="p-2 text-yellow-400 pointer-events-none"> @if(element.tmdbData?.vote_average){ @for(i of [].constructor(Math.round(element.tmdbData.vote_average/2)); track i){<span>★</span>} @for(i of [].constructor(5 - Math.round(element.tmdbData.vote_average/2)); track i){<span class="opacity-30">★</span>} } @else { <span>★★★★☆</span> } </div> }
                   @case ('tmdb-genres') { <div class="p-2 flex flex-wrap gap-2 items-center justify-center pointer-events-none"> @if(element.tmdbData?.genres) { @for(genre of element.tmdbData.genres; track genre.id) { <span class="genre-pill">{{genre.name}}</span> } } @else { <span class="genre-pill">Action</span><span class="genre-pill">Drama</span> } </div> }
                   @case ('tmdb-poster-scroll') {
                     <div class="w-full h-full flex items-center overflow-x-hidden p-2 gap-3 pointer-events-none">
@@ -397,7 +397,7 @@
                       </div>
                     </div>
                   }
-                  @case ('tmdb-cast') { <div class="w-full h-full flex items-start overflow-hidden p-2 gap-4 text-center text-xs pointer-events-none"> @if (element.tmdbData?.credits?.cast) { @for(actor of element.tmdbData.credits.cast.slice(0, 5); track actor.id) { @if(actor.profile_path) { <div class="flex flex-col items-center w-16 shrink-0"> <img [src]="'https://image.tmdb.org/t/p/w500' + actor.profile_path" class="w-12 h-12 object-cover rounded-full mb-1 shadow-md border border-white/10"> <span class="truncate w-full opacity-80">{{actor.name}}</span> </div> } } } @else { <div class="flex gap-4 opacity-50"><div class="w-12 h-12 rounded-full bg-[#183352]"></div><div class="w-12 h-12 rounded-full bg-[#183352]"></div></div> } </div> }
+                  @case ('tmdb-cast') { <div class="w-full h-full flex items-start overflow-hidden p-2 gap-4 text-center pointer-events-none"> @if (element.tmdbData?.credits?.cast) { @for(actor of element.tmdbData.credits.cast.slice(0, 5); track actor.id) { @if(actor.profile_path) { <div class="flex flex-col items-center w-16 shrink-0"> <img [src]="'https://image.tmdb.org/t/p/w500' + actor.profile_path" class="w-12 h-12 object-cover rounded-full mb-1 shadow-md border border-white/10"> <span class="truncate w-full opacity-80">{{actor.name}}</span> </div> } } } @else { <div class="flex gap-4 opacity-50"><div class="w-12 h-12 rounded-full bg-[#183352]"></div><div class="w-12 h-12 rounded-full bg-[#183352]"></div></div> } </div> }
                   @case ('tmdb-backdrop-slideshow') {
                       @if (slideshowState()[element.id]?.backdrops.length) {
                           @let state = slideshowState()[element.id];
@@ -800,6 +800,37 @@
                   </div>
               }
 
+              @if(el.layoutGroupId) {
+                <details class="accordion" open>
+                  <summary>Layout Group</summary>
+                  <div class="accordion-content space-y-3">
+                    <div class="p-3 bg-[#0a1724] rounded border border-[#254261]">
+                      <div class="text-xs text-[#8eaec4] font-semibold">
+                        {{ getLayoutGroupMemberCount(el) }} grouped element{{ getLayoutGroupMemberCount(el) === 1 ? '' : 's' }}
+                      </div>
+                      <div class="text-[10px] text-[#64839e] mt-1">
+                        {{ getLayoutGroupLockState(el) ? 'Locked: moving a grouped item moves the whole group.' : 'Unlocked: grouped items can be moved and resized individually.' }}
+                      </div>
+                    </div>
+
+                    <button (click)="setLayoutGroupLocked(el.id, !getLayoutGroupLockState(el))" class="btn btn-secondary w-full">
+                      <i class="fa-solid" [class.fa-lock-open]="getLayoutGroupLockState(el)" [class.fa-lock]="!getLayoutGroupLockState(el)"></i>
+                      {{ getLayoutGroupLockState(el) ? 'Unlock Group' : 'Lock Group' }}
+                    </button>
+
+                    @if(isLayoutGroupBackground(el)) {
+                      <button (click)="fitGroupBackgroundToMembers(el.id)" class="btn btn-secondary w-full">
+                        <i class="fa-solid fa-up-right-and-down-left-from-center"></i> Fit Background To Contents
+                      </button>
+                    }
+
+                    <button (click)="ungroupLayoutGroup(el.id)" class="btn btn-secondary w-full">
+                      <i class="fa-solid fa-object-ungroup"></i> Ungroup Elements
+                    </button>
+                  </div>
+                </details>
+              }
+
               <!-- LAYOUT -->
               <details class="accordion" open>
                 <summary>Layout & Position</summary>
@@ -916,7 +947,15 @@
                       <div class="col-span-2"><label class="label">Font Family</label><select [ngModel]="el.styles.fontFamily" (ngModelChange)="updateElementStyle('fontFamily', $event)" class="select"> @for(font of fonts; track font){ <option [value]="font">{{font}}</option> } </select></div>
                   </div>
                   <div class="grid grid-cols-2 gap-3">
-                    <div><label class="label">Size (px)</label><input type="number" [ngModel]="el.styles.fontSize" (ngModelChange)="updateElementStyle('fontSize', +$event)" class="input"></div>
+                    <div>
+                      <label class="label">Size</label>
+                      <div class="flex gap-2">
+                        <input type="number" min="0.1" step="0.1" [ngModel]="el.styles.fontSize" (ngModelChange)="updateElementStyle('fontSize', +$event)" class="input">
+                        <select [ngModel]="el.styles.fontSizeUnit || 'px'" (ngModelChange)="updateElementStyle('fontSizeUnit', $event)" class="select w-20 px-2">
+                          @for(unit of fontSizeUnits; track unit) { <option [value]="unit">{{unit}}</option> }
+                        </select>
+                      </div>
+                    </div>
                     <div><label class="label">Weight</label><select [ngModel]="el.styles.fontWeight" (ngModelChange)="updateElementStyle('fontWeight', $event)" class="select"><option value="400">Regular</option><option value="500">Medium</option><option value="600">Semibold</option><option value="700">Bold</option></select></div>
                   </div>
                   <div>

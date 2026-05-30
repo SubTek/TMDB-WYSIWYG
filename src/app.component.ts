@@ -28,6 +28,8 @@ type ElementType =
 type ImageFit = 'cover' | 'contain' | 'fill';
 type BackdropFitMode = 'width' | 'height' | 'cover';
 type ElementSizeProperty = 'width' | 'height';
+type FontSizeUnit = 'px' | 'pt' | 'em' | 'rem';
+type LayoutGroupRole = 'background' | 'member';
 type SlideshowState = {idx1: number, idx2: number, fade: boolean, sceneFade: boolean, backdrops: string[], items: any[]};
 type TmdbDetailEntry = { key: string; altKey: string; detail: any };
 
@@ -49,6 +51,7 @@ interface CanvasElement {
     backgroundColor: string;
     backgroundOpacity: number;
     color: string; fontFamily: string; fontSize: number;
+    fontSizeUnit?: FontSizeUnit;
     fontWeight: '400' | '500' | '600' | '700'; textAlign: 'left' | 'center' | 'right';
     borderRadius: number; borderWidth: number; borderColor: string;
     opacity: number;
@@ -71,6 +74,10 @@ interface CanvasElement {
   snapToGrid?: boolean;
   snapIncrement?: number;
   maintainAspectRatio?: boolean;
+  layoutGroupId?: string;
+  layoutGroupRole?: LayoutGroupRole;
+  groupLocked?: boolean;
+  groupPadding?: number;
 
   // For Dynamic Data Fields
   dataPath?: string;
@@ -122,6 +129,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   readonly collectionItemLimitOptions = [5, 10, 15, 20, 30, 40];
   readonly snapIncrementOptions = [5, 10, 20, 25, 50, 100];
   readonly slideshowDurationOptions = [3, 5, 8, 10, 15, 30];
+  readonly fontSizeUnits: FontSizeUnit[] = ['px', 'pt', 'em', 'rem'];
 
   // --- CONSTANTS & STATIC DATA ---
   readonly countries = COUNTRIES;
@@ -327,6 +335,16 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     return this.selectedElementIds().length >= 2;
   }
 
+  private normalizeFontSizeUnit(value: any): FontSizeUnit {
+    return this.fontSizeUnits.includes(value) ? value : 'px';
+  }
+
+  formatElementFontSize(element: CanvasElement): string {
+    const value = Number(element.styles.fontSize);
+    const size = Number.isFinite(value) ? Math.max(0.1, value) : 16;
+    return `${size}${this.normalizeFontSizeUnit(element.styles.fontSizeUnit)}`;
+  }
+
   isSyncedWithLayer(element: CanvasElement): boolean {
     return !!this.selectedSyncLayerId(element);
   }
@@ -350,6 +368,35 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return this.defaultSnapIncrement;
     return Math.max(1, Math.min(500, Math.round(parsed)));
+  }
+
+  private getLayoutGroupElements(element: CanvasElement, elements = this.elements()): CanvasElement[] {
+    if (!element.layoutGroupId) return [];
+    return elements.filter(el => el.layoutGroupId === element.layoutGroupId);
+  }
+
+  getLayoutGroupBackground(element: CanvasElement, elements = this.elements()): CanvasElement | null {
+    return this.getLayoutGroupElements(element, elements).find(el => el.layoutGroupRole === 'background') || null;
+  }
+
+  isLayoutGroupBackground(element: CanvasElement): boolean {
+    return element.layoutGroupRole === 'background';
+  }
+
+  getLayoutGroupLockState(element: CanvasElement, elements = this.elements()): boolean {
+    return !!this.getLayoutGroupBackground(element, elements)?.groupLocked;
+  }
+
+  isResizeLockedByGroup(element: CanvasElement, elements = this.elements()): boolean {
+    return element.layoutGroupRole === 'member' && this.getLayoutGroupLockState(element, elements);
+  }
+
+  canResizeElement(element: CanvasElement): boolean {
+    return !this.isResizeLockedByGroup(element);
+  }
+
+  getLayoutGroupMemberCount(element: CanvasElement, elements = this.elements()): number {
+    return this.getLayoutGroupElements(element, elements).filter(el => el.layoutGroupRole === 'member').length;
   }
 
   private isCollectionElementType(type: ElementType | string): boolean {
@@ -792,6 +839,10 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     const { tmdbData, ...rest } = element;
     const normalized: CanvasElement = {
       ...rest,
+      styles: {
+        ...element.styles,
+        fontSizeUnit: this.normalizeFontSizeUnit(element.styles?.fontSizeUnit)
+      },
       discoverFilters: {
         sortBy: element.discoverFilters?.sortBy || 'popularity.desc',
         genres: (element.discoverFilters?.genres || []).map(Number).filter(Number.isFinite),
@@ -944,7 +995,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
       styles: {
           backgroundColor: type === 'tmdb-dynamic-field' ? '#0d253f' : '#1b3a57', // TMDB Dark Blue and Surface
           backgroundOpacity: type === 'tmdb-dynamic-field' ? 0 : 1,
-          color: '#f1f5f9', fontFamily: 'Inter', fontSize: 16 * baseScale, fontWeight: '400', textAlign: 'left', borderRadius: 8, borderWidth: 0, borderColor: '#f1f5f9', opacity: 1, filterBlur: 0, filterGrayscale: 0
+          color: '#f1f5f9', fontFamily: 'Inter', fontSize: 16 * baseScale, fontSizeUnit: 'px', fontWeight: '400', textAlign: 'left', borderRadius: 8, borderWidth: 0, borderColor: '#f1f5f9', opacity: 1, filterBlur: 0, filterGrayscale: 0
       },
       tmdbItemType: itemType,
       tmdbCollectionType: resolvedCollectionType,
@@ -977,9 +1028,18 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   deleteElement(id: string) {
+    const deleted = this.elements().find(el => el.id === id);
+    const deletedGroupId = deleted?.layoutGroupRole === 'background' ? deleted.layoutGroupId : undefined;
     this.elements.update(els => els
       .filter(el => el.id !== id)
-      .map(el => el.syncedToElementId === id ? { ...el, syncedToElementId: undefined, linkGroup: '' } : el)
+      .map(el => {
+        let next = el.syncedToElementId === id ? { ...el, syncedToElementId: undefined, linkGroup: '' } : el;
+        if (deletedGroupId && next.layoutGroupId === deletedGroupId) {
+          const { layoutGroupId, layoutGroupRole, groupLocked, groupPadding, ...rest } = next;
+          next = rest as CanvasElement;
+        }
+        return next;
+      })
     );
     const remainingSelection = this.selectedElementIds().filter(selectedId => selectedId !== id);
     this.selectedElementIds.set(remainingSelection);
@@ -993,14 +1053,26 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   deleteSelectedElements() {
     const ids = this.selectedElementIds();
     if (ids.length === 0) return;
+    const idSet = new Set(ids);
+    const deletedBackgroundGroupIds = new Set(
+      this.elements()
+        .filter(el => idSet.has(el.id) && el.layoutGroupRole === 'background' && !!el.layoutGroupId)
+        .map(el => el.layoutGroupId!)
+    );
     ids.forEach(id => {
       if(this.slideshowIntervals.has(id)) { clearInterval(this.slideshowIntervals.get(id)); this.slideshowIntervals.delete(id); }
       if(this.posterScrollIntervals.has(id)) { clearInterval(this.posterScrollIntervals.get(id)); this.posterScrollIntervals.delete(id); }
     });
-    const idSet = new Set(ids);
     this.elements.update(els => els
       .filter(el => !idSet.has(el.id))
-      .map(el => el.syncedToElementId && idSet.has(el.syncedToElementId) ? { ...el, syncedToElementId: undefined, linkGroup: '' } : el)
+      .map(el => {
+        let next = el.syncedToElementId && idSet.has(el.syncedToElementId) ? { ...el, syncedToElementId: undefined, linkGroup: '' } : el;
+        if (next.layoutGroupId && deletedBackgroundGroupIds.has(next.layoutGroupId)) {
+          const { layoutGroupId, layoutGroupRole, groupLocked, groupPadding, ...rest } = next;
+          next = rest as CanvasElement;
+        }
+        return next;
+      })
     );
     this.selectedElementId.set(null);
     this.selectedElementIds.set([]);
@@ -1083,6 +1155,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     const minZ = Math.min(...selected.map(el => el.zIndex));
     const backgroundZ = Math.max(1, minZ - 1);
     const backgroundId = `el_${Date.now()}`;
+    const layoutGroupId = `layout_${Date.now().toString(36)}`;
 
     const background: CanvasElement = {
       id: backgroundId,
@@ -1101,6 +1174,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
         color: '#f1f5f9',
         fontFamily: 'Inter',
         fontSize: 16,
+        fontSizeUnit: 'px',
         fontWeight: '400',
         textAlign: 'left',
         borderRadius: 18,
@@ -1114,6 +1188,10 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
       tmdbCollectionType: 'movie',
       discoverFilters: { sortBy: 'popularity.desc', genres: [], year: null },
       imageFit: 'cover',
+      layoutGroupId,
+      layoutGroupRole: 'background',
+      groupLocked: true,
+      groupPadding: padding,
       linkGroup: '',
       dataPath: '',
       dataPrefix: '',
@@ -1122,7 +1200,15 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
 
     const selectedIdSet = new Set(ids);
     this.elements.update(els => [
-      ...els.map(el => selectedIdSet.has(el.id) && el.zIndex <= backgroundZ ? { ...el, zIndex: backgroundZ + 1 } : el),
+      ...els.map(el => {
+        if (!selectedIdSet.has(el.id)) return el;
+        return {
+          ...el,
+          zIndex: el.zIndex <= backgroundZ ? backgroundZ + 1 : el.zIndex,
+          layoutGroupId,
+          layoutGroupRole: 'member' as LayoutGroupRole
+        };
+      }),
       background
     ]);
 
@@ -1148,9 +1234,41 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     this.contextMenu.update(cm => ({ ...cm, visible: false }));
   }
 
-  updateElementStyle(prop: keyof CanvasElement['styles'], value: any) { this.updateSelectedElement(el => { el.styles = { ...el.styles, [prop]: value }; }); }
+  updateElementStyle(prop: keyof CanvasElement['styles'], value: any) {
+    this.updateSelectedElement(el => {
+      const nextValue = prop === 'fontSizeUnit'
+        ? this.normalizeFontSizeUnit(value)
+        : (prop === 'fontSize' ? Math.max(0.1, Number(value) || 16) : value);
+      el.styles = { ...el.styles, [prop]: nextValue };
+    });
+  }
 
   updateElementProperty(prop: keyof CanvasElement, value: any, noHistory = false) {
+      const selected = this.selectedElement();
+      if (selected && (prop === 'x' || prop === 'y') && this.getLayoutGroupLockState(selected)) {
+        const nextValue = this.maybeSnapValue(selected, Number(value));
+        const currentValue = Number(selected[prop]) || 0;
+        const delta = nextValue - currentValue;
+        if (delta !== 0 && selected.layoutGroupId) {
+          this.elements.update(els => els.map(el => el.layoutGroupId === selected.layoutGroupId ? {
+            ...el,
+            x: prop === 'x' ? el.x + delta : el.x,
+            y: prop === 'y' ? el.y + delta : el.y
+          } : el));
+          if (!noHistory) this.saveStateToHistory();
+        }
+        return;
+      }
+
+      if (selected && (prop === 'width' || prop === 'height') && this.isResizeLockedByGroup(selected)) {
+        return;
+      }
+
+      if (selected && (prop === 'width' || prop === 'height') && this.isLayoutGroupBackground(selected) && this.getLayoutGroupLockState(selected)) {
+        this.resizeLockedGroupFromBackgroundInput(selected, prop, value, noHistory);
+        return;
+      }
+
       this.updateSelectedElement(el => {
         if (prop === 'width' || prop === 'height') {
           this.applySizePropertyUpdate(el, prop, value);
@@ -1193,6 +1311,35 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
 	         this.fetchTmdbDataForElement(el.id);
 	     }
       }
+  }
+
+  private resizeLockedGroupFromBackgroundInput(background: CanvasElement, prop: ElementSizeProperty, value: any, noHistory = false) {
+    if (!background.layoutGroupId) return;
+
+    const nextValue = Math.max(20, this.maybeSnapValue(background, Number(value) || 20));
+    const scaleX = prop === 'width' ? nextValue / Math.max(1, background.width) : 1;
+    const scaleY = prop === 'height' ? nextValue / Math.max(1, background.height) : 1;
+
+    this.elements.update(els => els.map(el => {
+      if (el.layoutGroupId !== background.layoutGroupId) return el;
+      if (el.id === background.id) {
+        return {
+          ...el,
+          width: prop === 'width' ? nextValue : el.width,
+          height: prop === 'height' ? nextValue : el.height
+        };
+      }
+
+      return {
+        ...el,
+        x: background.x + ((el.x - background.x) * scaleX),
+        y: background.y + ((el.y - background.y) * scaleY),
+        width: Math.max(20, el.width * scaleX),
+        height: Math.max(20, el.height * scaleY)
+      };
+    }));
+
+    if (!noHistory) this.saveStateToHistory();
   }
 
   private applySizePropertyUpdate(element: CanvasElement, prop: ElementSizeProperty, value: any) {
@@ -1279,6 +1426,57 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
         ...el,
         maintainAspectRatio: value,
         height: value ? el.width / this.posterAspectRatio : el.height
+      };
+    }));
+    this.saveStateToHistory();
+  }
+
+  setLayoutGroupLocked(elementId: string, locked: boolean) {
+    const selected = this.elements().find(el => el.id === elementId);
+    if (!selected?.layoutGroupId) return;
+
+    this.elements.update(els => els.map(el => {
+      if (el.layoutGroupId !== selected.layoutGroupId || el.layoutGroupRole !== 'background') return el;
+      return { ...el, groupLocked: locked };
+    }));
+    this.saveStateToHistory();
+  }
+
+  ungroupLayoutGroup(elementId: string) {
+    const selected = this.elements().find(el => el.id === elementId);
+    if (!selected?.layoutGroupId) return;
+
+    const groupId = selected.layoutGroupId;
+    this.elements.update(els => els.map(el => {
+      if (el.layoutGroupId !== groupId) return el;
+      const { layoutGroupId, layoutGroupRole, groupLocked, groupPadding, ...rest } = el;
+      return rest as CanvasElement;
+    }));
+    this.saveStateToHistory();
+  }
+
+  fitGroupBackgroundToMembers(elementId: string) {
+    const selected = this.elements().find(el => el.id === elementId);
+    if (!selected?.layoutGroupId) return;
+
+    const background = this.getLayoutGroupBackground(selected);
+    const members = this.getLayoutGroupElements(selected).filter(el => el.layoutGroupRole === 'member');
+    if (!background || members.length === 0) return;
+
+    const padding = background.groupPadding ?? 24;
+    const minX = Math.min(...members.map(el => el.x));
+    const minY = Math.min(...members.map(el => el.y));
+    const maxX = Math.max(...members.map(el => el.x + el.width));
+    const maxY = Math.max(...members.map(el => el.y + el.height));
+
+    this.elements.update(els => els.map(el => {
+      if (el.id !== background.id) return el;
+      return {
+        ...el,
+        x: minX - padding,
+        y: minY - padding,
+        width: (maxX - minX) + (padding * 2),
+        height: (maxY - minY) + (padding * 2)
       };
     }));
     this.saveStateToHistory();
@@ -1931,6 +2129,18 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
     return { x, y, width, height };
   }
 
+  private setElementDragTransform(element: CanvasElement, x: number, y: number) {
+    const node = document.getElementById(element.id);
+    if (!node) return;
+    node.style.transform = `translate(${x}px, ${y}px) rotate(${element.rotation || 0}deg)`;
+  }
+
+  private resetElementDragTransform(element: CanvasElement) {
+    const node = document.getElementById(element.id);
+    if (!node) return;
+    node.style.transform = `rotate(${element.rotation || 0}deg)`;
+  }
+
   private setupInteract() {
     if (typeof interact === 'undefined') return;
 
@@ -1947,9 +2157,15 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
           const rawY = (parseFloat(target.getAttribute('data-raw-y')) || 0) + (event.dy / scale);
           const x = element.snapToGrid ? this.snapValue(element.x + rawX, this.getSnapIncrement(element)) - element.x : rawX;
           const y = element.snapToGrid ? this.snapValue(element.y + rawY, this.getSnapIncrement(element)) - element.y : rawY;
-          const rotation = element.rotation || 0;
+          const lockedGroup = this.getLayoutGroupLockState(element)
+            ? this.getLayoutGroupElements(element).filter(el => el.visible)
+            : [];
 
-          target.style.transform = `translate(${x}px, ${y}px) rotate(${rotation}deg)`;
+          if (lockedGroup.length > 0) {
+            lockedGroup.forEach(el => this.setElementDragTransform(el, x, y));
+          } else {
+            this.setElementDragTransform(element, x, y);
+          }
           target.setAttribute('data-x', x);
           target.setAttribute('data-y', y);
           target.setAttribute('data-raw-x', rawX);
@@ -1961,13 +2177,26 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
           if (element) {
             const xOffset = (parseFloat(target.getAttribute('data-x')) || 0);
             const yOffset = (parseFloat(target.getAttribute('data-y')) || 0);
-            const newX = element.x + xOffset;
-            const newY = element.y + yOffset;
+            const lockedGroup = this.getLayoutGroupLockState(element)
+              ? this.getLayoutGroupElements(element)
+              : [];
 
-            this.updateElementProperty('x', newX, true);
-            this.updateElementProperty('y', newY, true);
+            if (lockedGroup.length > 0) {
+              const groupIds = new Set(lockedGroup.map(el => el.id));
+              this.elements.update(els => els.map(el => groupIds.has(el.id) ? {
+                ...el,
+                x: el.x + xOffset,
+                y: el.y + yOffset
+              } : el));
+              lockedGroup.forEach(el => this.resetElementDragTransform(el));
+            } else {
+              const newX = element.x + xOffset;
+              const newY = element.y + yOffset;
+              this.updateElementProperty('x', newX, true);
+              this.updateElementProperty('y', newY, true);
+              this.resetElementDragTransform(element);
+            }
 
-            target.style.transform = `rotate(${element.rotation}deg)`;
             target.removeAttribute('data-x');
             target.removeAttribute('data-y');
             target.removeAttribute('data-raw-x');
@@ -1985,54 +2214,87 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
           const id = event.target.id;
           const scale = this.canvasConfig().scale;
           const target = event.target;
-          this.elements.update(els =>
-            els.map(el => {
-              if (el.id === id) {
-                if (!target.hasAttribute('data-resize-start-width')) {
-                  target.setAttribute('data-resize-start-x', el.x);
-                  target.setAttribute('data-resize-start-y', el.y);
-                  target.setAttribute('data-resize-start-width', el.width);
-                  target.setAttribute('data-resize-start-height', el.height);
-                  target.setAttribute('data-raw-resize-x', el.x);
-                  target.setAttribute('data-raw-resize-y', el.y);
-                  target.setAttribute('data-raw-resize-width', el.width);
-                  target.setAttribute('data-raw-resize-height', el.height);
-                }
+          this.elements.update(els => {
+            const source = els.find(el => el.id === id);
+            if (!source || this.isResizeLockedByGroup(source, els)) return els;
 
-                const startX = parseFloat(target.getAttribute('data-resize-start-x')) || el.x;
-                const startY = parseFloat(target.getAttribute('data-resize-start-y')) || el.y;
-                const startWidth = parseFloat(target.getAttribute('data-resize-start-width')) || el.width;
-                const startHeight = parseFloat(target.getAttribute('data-resize-start-height')) || el.height;
-                const rawX = (parseFloat(target.getAttribute('data-raw-resize-x')) || el.x) + (event.deltaRect.left / scale);
-                const rawY = (parseFloat(target.getAttribute('data-raw-resize-y')) || el.y) + (event.deltaRect.top / scale);
-                const rawWidth = (parseFloat(target.getAttribute('data-raw-resize-width')) || el.width) + (event.deltaRect.width / scale);
-                const rawHeight = (parseFloat(target.getAttribute('data-raw-resize-height')) || el.height) + (event.deltaRect.height / scale);
-
-                target.setAttribute('data-raw-resize-x', rawX);
-                target.setAttribute('data-raw-resize-y', rawY);
-                target.setAttribute('data-raw-resize-width', rawWidth);
-                target.setAttribute('data-raw-resize-height', rawHeight);
-
-                const bounds = this.getResizedBounds(el, {
-                  x: rawX,
-                  y: rawY,
-                  width: rawWidth,
-                  height: rawHeight,
-                  startX,
-                  startY,
-                  startWidth,
-                  startHeight,
-                  edges: event.edges || {}
-                });
-
-                return {
-                  ...el,
-                  ...bounds
-                };
+            if (!target.hasAttribute('data-resize-start-width')) {
+              target.setAttribute('data-resize-start-x', source.x);
+              target.setAttribute('data-resize-start-y', source.y);
+              target.setAttribute('data-resize-start-width', source.width);
+              target.setAttribute('data-resize-start-height', source.height);
+              target.setAttribute('data-raw-resize-x', source.x);
+              target.setAttribute('data-raw-resize-y', source.y);
+              target.setAttribute('data-raw-resize-width', source.width);
+              target.setAttribute('data-raw-resize-height', source.height);
+              if (this.isLayoutGroupBackground(source) && this.getLayoutGroupLockState(source, els)) {
+                target.setAttribute('data-group-resize-start', JSON.stringify(
+                  this.getLayoutGroupElements(source, els).map(el => ({
+                    id: el.id,
+                    x: el.x,
+                    y: el.y,
+                    width: el.width,
+                    height: el.height
+                  }))
+                ));
               }
-              return el;
-            })
-          );
+            }
+
+            const startX = parseFloat(target.getAttribute('data-resize-start-x')) || source.x;
+            const startY = parseFloat(target.getAttribute('data-resize-start-y')) || source.y;
+            const startWidth = parseFloat(target.getAttribute('data-resize-start-width')) || source.width;
+            const startHeight = parseFloat(target.getAttribute('data-resize-start-height')) || source.height;
+            const rawX = (parseFloat(target.getAttribute('data-raw-resize-x')) || source.x) + (event.deltaRect.left / scale);
+            const rawY = (parseFloat(target.getAttribute('data-raw-resize-y')) || source.y) + (event.deltaRect.top / scale);
+            const rawWidth = (parseFloat(target.getAttribute('data-raw-resize-width')) || source.width) + (event.deltaRect.width / scale);
+            const rawHeight = (parseFloat(target.getAttribute('data-raw-resize-height')) || source.height) + (event.deltaRect.height / scale);
+
+            target.setAttribute('data-raw-resize-x', rawX);
+            target.setAttribute('data-raw-resize-y', rawY);
+            target.setAttribute('data-raw-resize-width', rawWidth);
+            target.setAttribute('data-raw-resize-height', rawHeight);
+
+            const bounds = this.getResizedBounds(source, {
+              x: rawX,
+              y: rawY,
+              width: rawWidth,
+              height: rawHeight,
+              startX,
+              startY,
+              startWidth,
+              startHeight,
+              edges: event.edges || {}
+            });
+
+            const groupStartRaw = target.getAttribute('data-group-resize-start');
+            if (groupStartRaw && source.layoutGroupId) {
+              try {
+                const groupStart = JSON.parse(groupStartRaw) as Array<{id: string; x: number; y: number; width: number; height: number}>;
+                const startBackground = groupStart.find(item => item.id === source.id);
+                if (startBackground) {
+                  const scaleX = bounds.width / Math.max(1, startBackground.width);
+                  const scaleY = bounds.height / Math.max(1, startBackground.height);
+                  const startById = new Map(groupStart.map(item => [item.id, item]));
+                  return els.map(el => {
+                    const start = startById.get(el.id);
+                    if (!start) return el;
+                    if (el.id === source.id) return { ...el, ...bounds };
+                    return {
+                      ...el,
+                      x: bounds.x + ((start.x - startBackground.x) * scaleX),
+                      y: bounds.y + ((start.y - startBackground.y) * scaleY),
+                      width: Math.max(20, start.width * scaleX),
+                      height: Math.max(20, start.height * scaleY)
+                    };
+                  });
+                }
+              } catch {
+                // Fall back to resizing only the source element if stored group data is invalid.
+              }
+            }
+
+            return els.map(el => el.id === id ? { ...el, ...bounds } : el);
+          });
         },
         end: (event: any) => {
           [
@@ -2043,7 +2305,8 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
             'data-raw-resize-x',
             'data-raw-resize-y',
             'data-raw-resize-width',
-            'data-raw-resize-height'
+            'data-raw-resize-height',
+            'data-group-resize-start'
           ].forEach(attr => event.target.removeAttribute(attr));
           this.saveStateToHistory();
         }
@@ -2073,7 +2336,17 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
   duplicateElement(id: string) {
     const elToDup = this.elements().find(el => el.id === id);
     if (!elToDup) return;
-    const newEl: CanvasElement = { ...JSON.parse(JSON.stringify(elToDup)), id: `el_${Date.now()}`, x: elToDup.x + 20, y: elToDup.y + 20, zIndex: this.elements().length + 1 };
+    const newEl: CanvasElement = {
+      ...JSON.parse(JSON.stringify(elToDup)),
+      id: `el_${Date.now()}`,
+      x: elToDup.x + 20,
+      y: elToDup.y + 20,
+      zIndex: this.elements().length + 1,
+      layoutGroupId: undefined,
+      layoutGroupRole: undefined,
+      groupLocked: undefined,
+      groupPadding: undefined
+    };
     this.elements.update(els => [...els, newEl]);
     this.selectElement(newEl.id);
     this.saveStateToHistory();
@@ -2172,6 +2445,10 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
 
   private safeFontFamily(font: string): string {
     return this.fonts.includes(font) ? font : 'Inter';
+  }
+
+  private safeFontSizeUnit(unit: any): FontSizeUnit {
+    return this.normalizeFontSizeUnit(unit);
   }
 
   private normalizeExportDiscoverFilters(filters: DiscoverFilters | undefined): DiscoverFilters {
@@ -2550,7 +2827,8 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
             const topPct = (this.clampNumber(el.y, 0, -100000, 100000) / height) * 100;
             const widthPct = (this.clampNumber(el.width, 1, 1, 100000) / width) * 100;
             const heightPct = (this.clampNumber(el.height, 1, 1, 100000) / height) * 100;
-            const fontSizeVw = (this.clampNumber(s.fontSize, 16, 1, 500) / width) * 100;
+            const fontSize = this.clampNumber(s.fontSize, 16, 0.1, 500);
+            const fontSizeUnit = this.safeFontSizeUnit(s.fontSizeUnit);
             const bgRgba = this.hexToRgba(this.safeCssColor(s.backgroundColor, '#000000'), this.clampNumber(s.backgroundOpacity ?? 1, 1, 0, 1));
             const textAlign = ['left', 'center', 'right'].includes(s.textAlign) ? s.textAlign : 'left';
             const fontWeight = ['400', '500', '600', '700'].includes(s.fontWeight) ? s.fontWeight : '400';
@@ -2565,7 +2843,7 @@ export class AppComponent implements OnInit, OnDestroy, AfterViewInit {
                 `background-color: ${bgRgba}`,
                 `color: ${this.safeCssColor(s.color, '#ffffff')}`,
                 `font-family: '${this.safeFontFamily(s.fontFamily)}', sans-serif`,
-                `font-size: ${fontSizeVw.toFixed(2)}vw`,
+                `font-size: ${fontSize}${fontSizeUnit}`,
                 `font-weight: ${fontWeight}`,
                 `text-align: ${textAlign}`,
                 `border-radius: ${this.clampNumber(s.borderRadius, 0, 0, 500)}px`,
